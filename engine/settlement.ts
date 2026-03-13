@@ -13,6 +13,34 @@ function normalizeToken(token: string): string {
   return token.trim().toLowerCase();
 }
 
+function resolveTokenName(token: string): string {
+  const normalized = normalizeToken(token);
+  const overrides = process.env.BITGO_TOKEN_MAP;
+  if (overrides) {
+    try {
+      const parsed = JSON.parse(overrides) as Record<string, string>;
+      const mapped = parsed[normalized];
+      if (mapped) return mapped;
+    } catch {
+      // ignore malformed map
+    }
+  }
+  return normalized;
+}
+
+export class PartialSettlementError extends Error {
+  txHash: string;
+
+  constructor(message: string, txHash: string, cause?: unknown) {
+    super(message);
+    this.name = 'PartialSettlementError';
+    this.txHash = txHash;
+    if (cause !== undefined) {
+      (this as { cause?: unknown }).cause = cause;
+    }
+  }
+}
+
 type WalletsHandle = ReturnType<ReturnType<BitGoAPI['coin']>['wallets']>;
 
 let walletPromise: Promise<WalletsHandle> | null = null;
@@ -111,6 +139,43 @@ async function sendEthMany(
   return [String(txHash)];
 }
 
+async function sendEthSingle(address: string, amountWei: string): Promise<string> {
+  const walletPassphrase = requireEnv('BITGO_WALLET_PASSPHRASE');
+  const wallet = await getWalletInstance();
+  await wallet.refresh();
+
+  const result = await wallet.send({
+    address,
+    amount: amountWei,
+    walletPassphrase,
+    type: 'transfer',
+  });
+  const txHash = result?.txid || result?.hash || result?.id;
+  if (!txHash) throw new Error('[BitGo] Missing tx hash from send');
+  return String(txHash);
+}
+
+async function sendToken(
+  address: string,
+  amount: string,
+  tokenName: string
+): Promise<string> {
+  const walletPassphrase = requireEnv('BITGO_WALLET_PASSPHRASE');
+  const wallet = await getWalletInstance();
+  await wallet.refresh();
+
+  const result = await wallet.send({
+    address,
+    amount,
+    walletPassphrase,
+    tokenName,
+    type: 'transfer',
+  });
+  const txHash = result?.txid || result?.hash || result?.id;
+  if (!txHash) throw new Error('[BitGo] Missing tx hash from token send');
+  return String(txHash);
+}
+
 export async function settleEthOnly(
   addressA: string,
   addressB: string,
@@ -123,6 +188,53 @@ export async function settleEthOnly(
 
 export function isEthOnlyPair(tokenIn: string, tokenOut: string): boolean {
   return normalizeToken(tokenIn) === 'eth' && normalizeToken(tokenOut) === 'eth';
+}
+
+export async function settleTokenPair(
+  tokenIn: string,
+  tokenOut: string,
+  addressA: string,
+  addressB: string,
+  amountWei: string
+): Promise<SettlementResult> {
+  await whitelistBothAddresses(addressA, addressB);
+
+  const tokenInName = resolveTokenName(tokenIn);
+  const tokenOutName = resolveTokenName(tokenOut);
+  let txHash1: string;
+
+  try {
+    if (normalizeToken(tokenOut) === 'eth') {
+      txHash1 = await sendEthSingle(addressA, amountWei);
+    } else {
+      txHash1 = await sendToken(addressA, amountWei, tokenOutName);
+    }
+  } catch (err) {
+    console.error('[Settlement] FATAL — ERC-20 send #1 failed:', err);
+    throw err;
+  }
+
+  try {
+    let txHash2: string;
+    if (normalizeToken(tokenIn) === 'eth') {
+      txHash2 = await sendEthSingle(addressB, amountWei);
+    } else {
+      txHash2 = await sendToken(addressB, amountWei, tokenInName);
+    }
+    return { txHashes: [txHash1, txHash2] };
+  } catch (err) {
+    console.error('[Settlement] FATAL — send #2 failed after send #1 confirmed:', {
+      txHash1,
+      addressA,
+      addressB,
+      error: err,
+    });
+    throw new PartialSettlementError(
+      '[Settlement] ERC-20 second send failed after first confirmed',
+      txHash1,
+      err
+    );
+  }
 }
 
 export async function createDepositAddress(label: string): Promise<string> {

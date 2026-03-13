@@ -5,7 +5,13 @@ import cors from 'cors';
 import type { DecryptedOrder, MatchResult } from '../types';
 import { applyPartialFill, fetchLiveOrders, findMatch } from './matcher.js';
 import { writeReceipt } from './receipts.js';
-import { createDepositAddress, isEthOnlyPair, settleEthOnly } from './settlement.js';
+import {
+  PartialSettlementError,
+  createDepositAddress,
+  isEthOnlyPair,
+  settleEthOnly,
+  settleTokenPair,
+} from './settlement.js';
 import {
   generateSubname,
   resolveSessionAddress,
@@ -101,6 +107,27 @@ async function markSettlementFailed(match: MatchResult, error: unknown): Promise
   }
 }
 
+async function markPartialSettlement(
+  match: MatchResult,
+  error: PartialSettlementError
+): Promise<void> {
+  const entries: Array<DecryptedOrder> = [match.orderA, match.orderB];
+  for (const order of entries) {
+    const doc = await getDoc(order.ddocId);
+    if (!doc.content) continue;
+    const payload = JSON.parse(doc.content);
+    await updateDoc(
+      order.ddocId,
+      JSON.stringify({
+        ...payload,
+        status: 'PARTIAL_SETTLEMENT',
+        settlementTxHash: error.txHash,
+        settlementError: error.message,
+      })
+    );
+  }
+}
+
 let matchingInFlight = false;
 
 async function matchingCycle(): Promise<void> {
@@ -124,10 +151,6 @@ async function matchingCycle(): Promise<void> {
       throw new Error('[ENS] Failed to resolve session addresses');
     }
 
-    if (!isEthOnlyPair(match.orderA.tokenIn, match.orderA.tokenOut)) {
-      throw new Error('[Settlement] Non-ETH pair not supported in demo engine');
-    }
-
     const testRecipient = process.env.ENGINE_TEST_RECIPIENT;
     const settlementAddressA = testRecipient || addressA;
     const settlementAddressB = testRecipient || addressB;
@@ -136,11 +159,16 @@ async function matchingCycle(): Promise<void> {
       console.log('[Engine] ENGINE_TEST_RECIPIENT override in use:', testRecipient);
     }
 
-    const { txHashes } = await settleEthOnly(
-      settlementAddressA,
-      settlementAddressB,
-      match.fillAmount.toString()
-    );
+    const amountWei = match.fillAmount.toString();
+    const { txHashes } = isEthOnlyPair(match.orderA.tokenIn, match.orderA.tokenOut)
+      ? await settleEthOnly(settlementAddressA, settlementAddressB, amountWei)
+      : await settleTokenPair(
+          match.orderA.tokenIn,
+          match.orderA.tokenOut,
+          settlementAddressA,
+          settlementAddressB,
+          amountWei
+        );
 
     await finalizeOrder(
       match.orderA,
@@ -173,7 +201,11 @@ async function matchingCycle(): Promise<void> {
     );
   } catch (err) {
     if (match) {
-      await markSettlementFailed(match, err);
+      if (err instanceof PartialSettlementError) {
+        await markPartialSettlement(match, err);
+      } else {
+        await markSettlementFailed(match, err);
+      }
     }
     console.error('[Engine] Matching cycle error:', err);
   } finally {
