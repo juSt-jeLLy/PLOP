@@ -14,9 +14,12 @@ function normalizeAddress(address: string): string {
 }
 
 function getSignatureHeader(req: Request): string | null {
-  const value = req.headers['x-signature'];
-  if (Array.isArray(value)) return value[0] ?? null;
-  if (typeof value === 'string') return value;
+  const candidates = ['x-signature-sha256', 'x-signature'];
+  for (const header of candidates) {
+    const value = req.headers[header];
+    if (Array.isArray(value)) return value[0] ?? null;
+    if (typeof value === 'string') return value;
+  }
   return null;
 }
 

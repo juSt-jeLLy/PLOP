@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import nacl from 'tweetnacl';
+import { createHmac } from 'node:crypto';
 import { createPublicClient, http } from 'viem';
 import { sepolia } from 'viem/chains';
 import { normalize } from 'viem/ens';
@@ -36,6 +37,14 @@ async function fetchJson(url, init) {
     throw new Error(`HTTP ${res.status}: ${text.slice(0, 200)}`);
   }
   return text ? JSON.parse(text) : null;
+}
+
+function signWebhookPayload(payload) {
+  const secret = process.env.BITGO_WEBHOOK_SECRET;
+  if (!secret) return null;
+  const body = JSON.stringify(payload);
+  const signature = createHmac('sha256', secret).update(body).digest('hex');
+  return { body, signature: `sha256=${signature}` };
 }
 
 async function getDoc(ddocId) {
@@ -213,15 +222,26 @@ async function main() {
     transfer: { state: 'confirmed', entries: [{ address }] },
   });
 
+  const payloadA = webhookPayload(depositA);
+  const signedA = signWebhookPayload(payloadA);
   await fetchJson(`${engineUrl}/webhooks/bitgo`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(webhookPayload(depositA)),
+    headers: {
+      'Content-Type': 'application/json',
+      ...(signedA ? { 'x-signature-sha256': signedA.signature } : {}),
+    },
+    body: signedA ? signedA.body : JSON.stringify(payloadA),
   });
+
+  const payloadB = webhookPayload(depositB);
+  const signedB = signWebhookPayload(payloadB);
   await fetchJson(`${engineUrl}/webhooks/bitgo`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(webhookPayload(depositB)),
+    headers: {
+      'Content-Type': 'application/json',
+      ...(signedB ? { 'x-signature-sha256': signedB.signature } : {}),
+    },
+    body: signedB ? signedB.body : JSON.stringify(payloadB),
   });
 
   console.log('[Smoke] Waiting for settlement...');
