@@ -2,7 +2,7 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 import type { Request, Response } from 'express';
 
 import type { BitgoWebhookPayload, OrderStatus, StoredOrder } from '../types';
-import { getTextRecord } from './session.js';
+import { getTextRecord, rotateSessionAddress, setTextRecord } from './session.js';
 import { listDocs, updateDoc } from './orders.js';
 
 type RawBodyRequest = Request & { rawBody?: string };
@@ -41,6 +41,21 @@ function extractTransferAddresses(payload: BitgoWebhookPayload): string[] {
     }
   }
   return Array.from(new Set(addresses.map(normalizeAddress)));
+}
+
+function extractTransferIdentifiers(payload: BitgoWebhookPayload): string[] {
+  const transfer = (payload as Record<string, unknown>)?.transfer as Record<string, unknown> | undefined;
+  const candidates: Array<unknown> = [
+    transfer?.id,
+    transfer?.txid,
+    transfer?.txHash,
+    transfer?.hash,
+    (transfer as { txid?: unknown })?.txid,
+  ];
+  const ids = candidates
+    .filter((value): value is string => typeof value === 'string' && value.length > 0)
+    .map((value) => value.trim());
+  return Array.from(new Set(ids));
 }
 
 function isPendingDeposit(status: OrderStatus | undefined): boolean {
@@ -94,6 +109,41 @@ async function handleTransferConfirmed(payload: BitgoWebhookPayload): Promise<vo
   const addresses = extractTransferAddresses(payload);
   for (const address of addresses) {
     await markOrdersLiveByDepositAddress(address);
+  }
+
+  const identifiers = extractTransferIdentifiers(payload);
+  if (identifiers.length === 0) return;
+
+  let skip = 0;
+  while (true) {
+    const { ddocs, hasNext } = await listDocs(PAGE_LIMIT, skip);
+    for (const doc of ddocs) {
+      if (!doc.ddocId || !doc.content) continue;
+      let parsed: StoredOrder | null = null;
+      try {
+        parsed = JSON.parse(doc.content) as StoredOrder;
+      } catch {
+        continue;
+      }
+      if (!parsed) continue;
+      if (parsed.status !== 'MATCHED') continue;
+      if (!parsed.settlementTxHash || !parsed.sessionSubname) continue;
+
+      const hashes = parsed.settlementTxHash
+        .split(',')
+        .map((item) => item.trim())
+        .filter(Boolean);
+      const match = hashes.some((hash) => identifiers.includes(hash));
+      if (!match) continue;
+
+      const active = await getTextRecord(parsed.sessionSubname, 'plop.active');
+      if (active === 'false') continue;
+
+      await rotateSessionAddress(parsed.sessionSubname);
+      await setTextRecord(parsed.sessionSubname, 'plop.active', 'false');
+    }
+    if (!hasNext) break;
+    skip += PAGE_LIMIT;
   }
 }
 

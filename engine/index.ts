@@ -9,9 +9,7 @@ import { createDepositAddress, isEthOnlyPair, settleEthOnly } from './settlement
 import {
   generateSubname,
   resolveSessionAddress,
-  rotateSessionAddress,
   setSessionMetadata,
-  setTextRecord,
 } from './session.js';
 import { createBitgoWebhookHandler } from './webhooks.js';
 import { getDoc, updateDoc } from './orders.js';
@@ -62,12 +60,6 @@ app.post('/session', async (req, res) => {
     res.status(500).json({ error: String(err) });
   }
 });
-
-async function rotateIfFullyFilled(order: DecryptedOrder, fullyFilled: boolean): Promise<void> {
-  if (!fullyFilled) return;
-  await rotateSessionAddress(order.subname);
-  await setTextRecord(order.subname, 'plop.active', 'false');
-}
 
 async function finalizeOrder(
   order: DecryptedOrder,
@@ -149,9 +141,6 @@ async function matchingCycle(): Promise<void> {
       settlementAddressB,
       match.fillAmount.toString()
     );
-
-    await rotateIfFullyFilled(match.orderA, match.aFullyFilled);
-    await rotateIfFullyFilled(match.orderB, match.bFullyFilled);
 
     await finalizeOrder(
       match.orderA,
