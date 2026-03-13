@@ -81,6 +81,21 @@ async function sendEthMany(
 ): Promise<string[]> {
   const walletPassphrase = requireEnv('BITGO_WALLET_PASSPHRASE');
   const wallet = await getWalletInstance();
+  await wallet.refresh();
+
+  try {
+    const spendable = BigInt(wallet.spendableBalanceString());
+    const required = BigInt(amountWei) * 2n;
+    if (spendable < required) {
+      throw new Error(
+        `[BitGo] Insufficient spendable balance. Need ${required.toString()} wei, have ${spendable.toString()} wei`
+      );
+    }
+  } catch (err) {
+    if (err instanceof Error && err.message.startsWith('[BitGo] Insufficient spendable balance')) {
+      throw err;
+    }
+  }
 
   const result = await wallet.sendMany({
     recipients: [
