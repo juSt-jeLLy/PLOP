@@ -140,7 +140,8 @@ async function createOrder({
   });
   const ddocId = createRes?.data?.ddocId;
   if (!ddocId) throw new Error('[Smoke] Fileverse createDoc failed');
-  await waitForSync(ddocId);
+  const syncTimeoutMs = Number(process.env.FILEVERSE_SYNC_TIMEOUT_MS || 300000);
+  await waitForSync(ddocId, syncTimeoutMs);
   return ddocId;
 }
 
@@ -148,6 +149,9 @@ async function main() {
   const engineUrl = requireEnv('ENGINE_URL').replace(/\/+$/, '');
   const engineAddress = requireEnv('ENGINE_ADDRESS');
   const rpcUrl = requireEnv('ETH_SEPOLIA_RPC');
+  const skipSync = ['1', 'true', 'yes'].includes((process.env.FILEVERSE_SKIP_SYNC || '').toLowerCase());
+  const skipReceipts = skipSync
+    || ['1', 'true', 'yes'].includes((process.env.SMOKE_SKIP_RECEIPTS || '').toLowerCase());
 
   console.log('[Smoke] Engine health check...');
   const health = await fetchJson(`${engineUrl}/health`);
@@ -232,10 +236,14 @@ async function main() {
   });
 
   console.log('[Smoke] Checking receipts text records...');
-  await Promise.all([
-    waitForEnsText(ensClient, subnameA, 'plop.receipts', (value) => Boolean(value)),
-    waitForEnsText(ensClient, subnameB, 'plop.receipts', (value) => Boolean(value)),
-  ]);
+  if (skipReceipts) {
+    console.log('[Smoke] Skipping receipts check (sync disabled)');
+  } else {
+    await Promise.all([
+      waitForEnsText(ensClient, subnameA, 'plop.receipts', (value) => Boolean(value)),
+      waitForEnsText(ensClient, subnameB, 'plop.receipts', (value) => Boolean(value)),
+    ]);
+  }
 
   console.log('[Smoke] Cleaning up test orders...');
   await deleteDoc(orderA);
