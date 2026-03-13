@@ -1,0 +1,171 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 240 20% 2%;
+    --foreground: 213 31% 95%;
+
+    --card: 240 18% 5%;
+    --card-foreground: 213 31% 95%;
+
+    --popover: 240 18% 5%;
+    --popover-foreground: 213 31% 95%;
+
+    --primary: 239 84% 67%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 240 15% 8%;
+    --secondary-foreground: 213 31% 95%;
+
+    --muted: 240 15% 10%;
+    --muted-foreground: 215 16% 47%;
+
+    --accent: 187 94% 43%;
+    --accent-foreground: 0 0% 100%;
+
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 0 0% 100% / 0.06;
+    --input: 240 15% 12%;
+    --ring: 239 84% 67%;
+
+    --radius: 0.75rem;
+
+    /* PLOP custom tokens */
+    --bg-primary: 240 20% 2%;
+    --bg-secondary: 240 18% 4%;
+    --bg-card: 240 18% 5%;
+    --border-subtle: 0 0% 100% / 0.06;
+    --border-glow: 239 84% 67% / 0.3;
+
+    --accent-purple: 239 84% 67%;
+    --accent-cyan: 187 94% 43%;
+    --accent-green: 160 84% 39%;
+    --accent-red: 0 84% 60%;
+    --accent-yellow: 38 92% 50%;
+
+    --text-primary: 213 31% 95%;
+    --text-secondary: 215 25% 62%;
+    --text-muted: 215 16% 47%;
+
+    --gradient-primary: linear-gradient(135deg, hsl(239 84% 67%) 0%, hsl(187 94% 43%) 100%);
+    --glow-purple: 0 0 40px hsl(239 84% 67% / 0.4);
+    --glow-cyan: 0 0 40px hsl(187 94% 43% / 0.3);
+    --glow-green: 0 0 30px hsl(160 84% 39% / 0.3);
+
+    --sidebar-background: 240 18% 4%;
+    --sidebar-foreground: 213 31% 95%;
+    --sidebar-primary: 239 84% 67%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 240 15% 10%;
+    --sidebar-accent-foreground: 213 31% 95%;
+    --sidebar-border: 0 0% 100% / 0.06;
+    --sidebar-ring: 239 84% 67%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    font-family: 'Inter', sans-serif;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    font-family: 'Syne', sans-serif;
+  }
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: hsl(var(--bg-secondary));
+}
+::-webkit-scrollbar-thumb {
+  background: hsl(var(--muted-foreground) / 0.3);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: hsl(var(--muted-foreground) / 0.5);
+}
+
+/* Orb drift animations */
+@keyframes drift1 {
+  0% { transform: translate(0, 0) scale(1); }
+  100% { transform: translate(60px, 40px) scale(1.1); }
+}
+@keyframes drift2 {
+  0% { transform: translate(0, 0) scale(1); }
+  100% { transform: translate(-40px, 60px) scale(1.05); }
+}
+@keyframes drift3 {
+  0% { transform: translate(0, 0) scale(1); }
+  100% { transform: translate(30px, -50px) scale(1.15); }
+}
+
+/* Matched flash */
+@keyframes matchedFlash {
+  0% { box-shadow: 0 0 0 0 hsl(var(--accent-green) / 0.6); }
+  50% { box-shadow: 0 0 20px 4px hsl(var(--accent-green) / 0.3); }
+  100% { box-shadow: 0 0 0 0 hsl(var(--accent-green) / 0); }
+}
+.matched-flash {
+  animation: matchedFlash 0.8s ease-out;
+}
+
+/* Shimmer effect */
+@keyframes shimmer {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+
+/* Pulse dot */
+@keyframes pulseDot {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.4); opacity: 0.5; }
+}
+
+/* Stroke draw animation */
+@keyframes strokeDraw {
+  to { stroke-dashoffset: 0; }
+}
+
+/* Fade up for landing sections */
+@keyframes fadeUp {
+  0% { opacity: 0; transform: translateY(20px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+.animate-fade-up {
+  animation: fadeUp 0.6s ease-out forwards;
+  opacity: 0;
+}
+
+/* Progress bar shrink */
+@keyframes shrinkWidth {
+  from { width: 100%; }
+  to { width: 0%; }
+}
+
+/* Gradient text utility */
+.gradient-text {
+  background: var(--gradient-primary);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* Font utilities */
+.font-syne {
+  font-family: 'Syne', sans-serif;
+}
+.font-mono {
+  font-family: 'JetBrains Mono', monospace;
+}
