@@ -58,6 +58,20 @@ function extractTransferIdentifiers(payload: BitgoWebhookPayload): string[] {
   return Array.from(new Set(ids));
 }
 
+function parseTxHashes(value: string | undefined): string[] {
+  if (!value) return [];
+  return value
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function mergeConfirmed(existing: string[] | undefined, incoming: string[]): string[] {
+  const set = new Set(existing ?? []);
+  for (const hash of incoming) set.add(hash);
+  return Array.from(set);
+}
+
 function isPendingDeposit(status: OrderStatus | undefined): boolean {
   return status === 'PENDING_DEPOSIT';
 }
@@ -126,15 +140,34 @@ async function handleTransferConfirmed(payload: BitgoWebhookPayload): Promise<vo
         continue;
       }
       if (!parsed) continue;
-      if (parsed.status !== 'MATCHED') continue;
       if (!parsed.settlementTxHash || !parsed.sessionSubname) continue;
 
-      const hashes = parsed.settlementTxHash
-        .split(',')
-        .map((item) => item.trim())
-        .filter(Boolean);
-      const match = hashes.some((hash) => identifiers.includes(hash));
-      if (!match) continue;
+      const expected = parseTxHashes(parsed.settlementTxHash);
+      if (expected.length === 0) continue;
+
+      const confirmedNow = expected.filter((hash) => identifiers.includes(hash));
+      if (confirmedNow.length === 0) continue;
+
+      const mergedConfirmed = mergeConfirmed(
+        parsed.settlementConfirmedTxHashes,
+        confirmedNow
+      );
+      const updated = mergedConfirmed.length !== (parsed.settlementConfirmedTxHashes ?? []).length;
+
+      if (updated) {
+        await updateDoc(
+          doc.ddocId,
+          JSON.stringify({
+            ...parsed,
+            settlementConfirmedTxHashes: mergedConfirmed,
+          })
+        );
+      }
+
+      if (parsed.status !== 'MATCHED') continue;
+
+      const allConfirmed = expected.every((hash) => mergedConfirmed.includes(hash));
+      if (!allConfirmed) continue;
 
       const active = await getTextRecord(parsed.sessionSubname, 'plop.active');
       if (active === 'false') continue;

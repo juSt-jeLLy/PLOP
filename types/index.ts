@@ -43,6 +43,7 @@ export interface StoredOrder {
   lastFillAt?: number;
   settledAt?: number;
   settlementTxHash?: string;
+  settlementConfirmedTxHashes?: string[];
   settlementError?: string;
   matchedPrice?: number;
   counterpartyEns?: string;

@@ -100,6 +100,11 @@ export async function whitelistBothAddresses(addressA: string, addressB: string)
       throw err;
     }
   }
+
+  const waitMs = Number(process.env.BITGO_WHITELIST_WAIT_MS || 2000);
+  if (Number.isFinite(waitMs) && waitMs > 0) {
+    await new Promise((resolve) => setTimeout(resolve, waitMs));
+  }
 }
 
 async function sendEthMany(
