@@ -1,10 +1,18 @@
 import 'dotenv/config';
 import nacl from 'tweetnacl';
 import { createHmac, randomBytes } from 'node:crypto';
-import { createPublicClient, createWalletClient, defineChain, http, parseEther } from 'viem';
+import {
+  createPublicClient,
+  createWalletClient,
+  defineChain,
+  http,
+  parseAbi,
+  parseEther,
+  parseUnits,
+} from 'viem';
+import { privateKeyToAccount } from 'viem/accounts';
 import { sepolia } from 'viem/chains';
 import { normalize } from 'viem/ens';
-import { privateKeyToAccount } from 'viem/accounts';
 
 function requireEnv(name) {
   const value = process.env[name];
@@ -23,6 +31,7 @@ function decodeBase64(value) {
 function randomAddress() {
   return `0x${randomBytes(20).toString('hex')}`;
 }
+
 function isTruthy(value) {
   return ['1', 'true', 'yes'].includes((value || '').toLowerCase());
 }
@@ -41,7 +50,7 @@ function getFundingKey() {
 
 function getHoodiChain(rpcUrl) {
   return defineChain({
-    id: 560048,
+    id: Number(process.env.HOODI_CHAIN_ID || 560048),
     name: 'Hoodi',
     nativeCurrency: { name: 'Hoodi ETH', symbol: 'ETH', decimals: 18 },
     rpcUrls: { default: { http: [rpcUrl] } },
@@ -49,24 +58,172 @@ function getHoodiChain(rpcUrl) {
   });
 }
 
-async function sendDeposit(address, amountEth) {
+function shouldWaitReceipt() {
+  if (process.env.SMOKE_WAIT_RECEIPT === undefined) return true;
+  return isTruthy(process.env.SMOKE_WAIT_RECEIPT);
+}
+
+function fileverseUrl(path, params = {}) {
+  const server = requireEnv('FILEVERSE_SERVER_URL').replace(/\/+$/, '');
+  const apiKey = requireEnv('FILEVERSE_API_KEY');
+  const url = new URL(`${server}${path}`);
+  url.searchParams.set('apiKey', apiKey);
+  Object.entries(params).forEach(([key, val]) => {
+    if (val !== undefined && val !== null) url.searchParams.set(key, String(val));
+  });
+  return url.toString();
+}
+
+async function fetchJson(url, init) {
+  const res = await fetch(url, init);
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(`HTTP ${res.status}: ${text.slice(0, 200)}`);
+  }
+  return text ? JSON.parse(text) : null;
+}
+
+const ERC20_ABI = parseAbi([
+  'function balanceOf(address) view returns (uint256)',
+  'function transfer(address to, uint256 amount) returns (bool)',
+]);
+const NATIVE_TOKENS = new Set(['eth', 'hteth']);
+
+function normalizeToken(token) {
+  return token.trim().toLowerCase();
+}
+
+function getHoodiClients() {
   const rpcUrl = requireEnv('ETH_HOODI_RPC');
   const privateKey = getFundingKey();
   if (!privateKey) {
     throw new Error('[Config] Missing HOODI_FUNDING_PRIVATE_KEY or ENGINE_PRIVATE_KEY or DEPLOYER_PRIVATE_KEY');
   }
-
   const chain = getHoodiChain(rpcUrl);
   const account = privateKeyToAccount(privateKey);
-  console.log('[Smoke] Hoodi funding wallet:', account.address);
   const walletClient = createWalletClient({ account, chain, transport: http(rpcUrl) });
   const publicClient = createPublicClient({ chain, transport: http(rpcUrl) });
-  const hash = await walletClient.sendTransaction({
-    to: address,
-    value: parseEther(amountEth),
+  return { walletClient, publicClient, account };
+}
+
+function getTokenAddressMap() {
+  const raw = process.env.TOKEN_ADDRESS_MAP || process.env.VITE_TOKEN_ADDRESS_MAP;
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw);
+    return Object.entries(parsed).reduce((acc, [key, value]) => {
+      acc[normalizeToken(key)] = value;
+      return acc;
+    }, {});
+  } catch {
+    throw new Error('[ERC20 Smoke] Failed to parse token address map');
+  }
+}
+
+function getTokenDecimalsMap() {
+  const raw = process.env.TOKEN_DECIMALS || process.env.VITE_TOKEN_DECIMALS;
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw);
+    return Object.entries(parsed).reduce((acc, [key, value]) => {
+      acc[normalizeToken(key)] = Number(value);
+      return acc;
+    }, {});
+  } catch {
+    throw new Error('[ERC20 Smoke] Failed to parse token decimals map');
+  }
+}
+
+function resolveTokenAddress(token) {
+  const map = getTokenAddressMap();
+  return map[normalizeToken(token)];
+}
+
+function getTokenDecimals(token) {
+  const map = getTokenDecimalsMap();
+  const value = map[normalizeToken(token)];
+  return Number.isFinite(value) ? value : 18;
+}
+
+function getDepositAmountForToken(token, defaultAmount = '0.01') {
+  const normalized = normalizeToken(token);
+  if (NATIVE_TOKENS.has(normalized)) {
+    if (process.env.SMOKE_DEPOSIT_WEI) return BigInt(process.env.SMOKE_DEPOSIT_WEI);
+    const ethAmount = process.env.SMOKE_DEPOSIT_ETH || defaultAmount;
+    return parseEther(ethAmount);
+  }
+  const tokenAmount = process.env.SMOKE_DEPOSIT_TOKEN || process.env.SMOKE_DEPOSIT_ETH || defaultAmount;
+  return parseUnits(tokenAmount, getTokenDecimals(token));
+}
+
+async function sendEthDeposit(to, amountWei) {
+  const { walletClient, publicClient, account } = getHoodiClients();
+  const txHash = await walletClient.sendTransaction({ account, to, value: amountWei });
+  if (shouldWaitReceipt()) {
+    await publicClient.waitForTransactionReceipt({ hash: txHash });
+  }
+  return txHash;
+}
+
+async function sendTokenDeposit(token, to, amountWei) {
+  const tokenAddress = resolveTokenAddress(token);
+  if (!tokenAddress) {
+    throw new Error(`[ERC20 Smoke] Missing token address for ${token}`);
+  }
+  const { walletClient, publicClient, account } = getHoodiClients();
+  const txHash = await walletClient.writeContract({
+    account,
+    address: tokenAddress,
+    abi: ERC20_ABI,
+    functionName: 'transfer',
+    args: [to, amountWei],
   });
-  await publicClient.waitForTransactionReceipt({ hash });
-  return hash;
+  if (shouldWaitReceipt()) {
+    await publicClient.waitForTransactionReceipt({ hash: txHash });
+  }
+  return txHash;
+}
+
+async function sendDeposit(token, to, amountWei) {
+  if (NATIVE_TOKENS.has(normalizeToken(token))) {
+    return sendEthDeposit(to, amountWei);
+  }
+  return sendTokenDeposit(token, to, amountWei);
+}
+
+async function waitForDepositBalance(token, address, minAmount, timeoutMs = 240000) {
+  const { publicClient } = getHoodiClients();
+  const start = Date.now();
+  const normalized = normalizeToken(token);
+  const isNative = NATIVE_TOKENS.has(normalized);
+  const tokenAddress = isNative ? null : resolveTokenAddress(token);
+
+  if (!isNative && !tokenAddress) {
+    throw new Error(`[ERC20 Smoke] Missing token address for ${token}`);
+  }
+
+  while (Date.now() - start < timeoutMs) {
+    const balance = isNative
+      ? await publicClient.getBalance({ address })
+      : await publicClient.readContract({
+          address: tokenAddress,
+          abi: ERC20_ABI,
+          functionName: 'balanceOf',
+          args: [address],
+        });
+
+    if (balance >= minAmount) return balance;
+    await new Promise((resolve) => setTimeout(resolve, 5000));
+  }
+  throw new Error(`[ERC20 Smoke] Timeout waiting for ${token} deposit balance`);
+}
+
+function signWebhookPayload(payload) {
+  const secret = process.env.BITGO_WEBHOOK_SECRET;
+  if (!secret) return null;
+  const body = JSON.stringify(payload);
+  const signature = createHmac('sha256', secret).update(body).digest('hex');
+  return { body, signature: `sha256=${signature}` };
 }
 
 async function simulateWebhookConfirm(engineUrl, depositAddress) {
@@ -95,34 +252,6 @@ function requireSafeRecipient(useRealDeposit) {
     return;
   }
   throw new Error('[ERC20 Smoke] ENGINE_TEST_RECIPIENT not set. Set it or SMOKE_ALLOW_DERIVED_RECIPIENT=1 to proceed.');
-}
-
-function fileverseUrl(path, params = {}) {
-  const server = requireEnv('FILEVERSE_SERVER_URL').replace(/\/+$/, '');
-  const apiKey = requireEnv('FILEVERSE_API_KEY');
-  const url = new URL(`${server}${path}`);
-  url.searchParams.set('apiKey', apiKey);
-  Object.entries(params).forEach(([key, val]) => {
-    if (val !== undefined && val !== null) url.searchParams.set(key, String(val));
-  });
-  return url.toString();
-}
-
-async function fetchJson(url, init) {
-  const res = await fetch(url, init);
-  const text = await res.text();
-  if (!res.ok) {
-    throw new Error(`HTTP ${res.status}: ${text.slice(0, 200)}`);
-  }
-  return text ? JSON.parse(text) : null;
-}
-
-function signWebhookPayload(payload) {
-  const secret = process.env.BITGO_WEBHOOK_SECRET;
-  if (!secret) return null;
-  const body = JSON.stringify(payload);
-  const signature = createHmac('sha256', secret).update(body).digest('hex');
-  return { body, signature: `sha256=${signature}` };
 }
 
 async function getDoc(ddocId) {
@@ -238,7 +367,6 @@ async function main() {
   const engineUrl = requireEnv('ENGINE_URL').replace(/\/+$/, '');
   const rpcUrl = requireEnv('ETH_SEPOLIA_RPC');
   const useRealDeposit = isTruthy(process.env.SMOKE_REAL_DEPOSIT);
-  const depositAmountEth = process.env.SMOKE_DEPOSIT_ETH || '0.01';
   const simulateWebhook = shouldSimulateWebhook();
   requireSafeRecipient(useRealDeposit);
   const skipSync = ['1', 'true', 'yes'].includes((process.env.FILEVERSE_SKIP_SYNC || '').toLowerCase());
@@ -283,14 +411,15 @@ async function main() {
   console.log(`[ERC20 Smoke] Creating orders (${tokenIn} <-> ${tokenOut})...`);
   const traderA = nacl.box.keyPair();
   const traderB = nacl.box.keyPair();
-  const amountWei = '100000000000000'; // 0.0001 (18 decimals)
+  const amountWeiA = getDepositAmountForToken(tokenIn).toString();
+  const amountWeiB = getDepositAmountForToken(tokenOut).toString();
 
   const orderA = await createOrder({
     subname: subnameA,
     depositAddress: depositA,
     traderKeypair: traderA,
     type: 'SELL',
-    amountWei,
+    amountWei: amountWeiA,
     limitPrice: '1',
     tokenIn,
     tokenOut,
@@ -300,7 +429,7 @@ async function main() {
     depositAddress: depositB,
     traderKeypair: traderB,
     type: 'BUY',
-    amountWei,
+    amountWei: amountWeiB,
     limitPrice: '1',
     tokenIn: tokenOut,
     tokenOut: tokenIn,
@@ -308,10 +437,14 @@ async function main() {
   console.log('[ERC20 Smoke] Orders created:', { orderA, orderB });
 
   if (useRealDeposit) {
+    const { account } = getHoodiClients();
     console.log('[ERC20 Smoke] Sending real deposits on Hoodi...');
-    const txA = await sendDeposit(depositA, depositAmountEth);
-    const txB = await sendDeposit(depositB, depositAmountEth);
+    console.log('[ERC20 Smoke] Hoodi funding wallet:', account.address);
+    const txA = await sendDeposit(tokenIn, depositA, BigInt(amountWeiA));
+    const txB = await sendDeposit(tokenOut, depositB, BigInt(amountWeiB));
     console.log('[ERC20 Smoke] Deposit tx hashes:', { txA, txB });
+    await waitForDepositBalance(tokenIn, depositA, BigInt(amountWeiA));
+    await waitForDepositBalance(tokenOut, depositB, BigInt(amountWeiB));
 
     if (simulateWebhook) {
       console.log('[ERC20 Smoke] Simulating webhooks (local engine detected)...');

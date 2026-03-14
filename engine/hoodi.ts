@@ -1,47 +1,148 @@
-import { createPublicClient, defineChain, http, type Address } from 'viem';
+import { createPublicClient, defineChain, http, parseAbi, parseUnits, type Address } from 'viem';
 
-import type { StoredOrder } from '../types';
-import { getTextRecord } from './session.js';
+import type { OrderPayload, OrderStatus, StoredOrder } from '../types';
+import { decryptOrderPayload } from './crypto.js';
 import { listDocs, updateDoc } from './orders.js';
+import { getTextRecord } from './session.js';
 
 const PAGE_LIMIT = 50;
 const DEFAULT_CHAIN_ID = 560048;
+const NATIVE_TOKENS = new Set(['eth', 'hteth']);
+const ERC20_ABI = parseAbi([
+  'function balanceOf(address) view returns (uint256)',
+]);
 
-function requireEnv(name: string): string {
-  const value = process.env[name];
-  if (!value) throw new Error(`[Config] Missing ${name}`);
-  return value;
+type TokenAddressMap = Record<string, `0x${string}`>;
+type TokenDecimalsMap = Record<string, number>;
+
+function normalizeToken(token: string): string {
+  return token.trim().toLowerCase();
 }
 
-function getHoodiClient() {
+function parseBool(value: string | undefined, defaultValue: boolean): boolean {
+  if (value === undefined) return defaultValue;
+  return ['1', 'true', 'yes', 'y', 'on'].includes(value.trim().toLowerCase());
+}
+
+let tokenAddressMap: TokenAddressMap | null = null;
+function getTokenAddressMap(): TokenAddressMap {
+  if (tokenAddressMap) return tokenAddressMap;
+  const raw = process.env.TOKEN_ADDRESS_MAP || process.env.VITE_TOKEN_ADDRESS_MAP;
+  if (!raw) {
+    tokenAddressMap = {};
+    return tokenAddressMap;
+  }
+  try {
+    const parsed = JSON.parse(raw) as Record<string, string>;
+    tokenAddressMap = Object.entries(parsed).reduce<TokenAddressMap>((acc, [key, value]) => {
+      acc[normalizeToken(key)] = value as `0x${string}`;
+      return acc;
+    }, {});
+  } catch (err) {
+    console.warn('[Hoodi] Failed to parse token address map; ERC-20 deposits disabled.', err);
+    tokenAddressMap = {};
+  }
+  return tokenAddressMap;
+}
+
+let tokenDecimalsMap: TokenDecimalsMap | null = null;
+function getTokenDecimalsMap(): TokenDecimalsMap {
+  if (tokenDecimalsMap) return tokenDecimalsMap;
+  const raw = process.env.TOKEN_DECIMALS || process.env.VITE_TOKEN_DECIMALS;
+  if (!raw) {
+    tokenDecimalsMap = {};
+    return tokenDecimalsMap;
+  }
+  try {
+    const parsed = JSON.parse(raw) as Record<string, number | string>;
+    tokenDecimalsMap = Object.entries(parsed).reduce<TokenDecimalsMap>((acc, [key, value]) => {
+      const parsedValue = typeof value === 'string' ? Number(value) : value;
+      acc[normalizeToken(key)] = Number.isFinite(parsedValue) ? parsedValue : 18;
+      return acc;
+    }, {});
+  } catch (err) {
+    console.warn('[Hoodi] Failed to parse token decimals map.', err);
+    tokenDecimalsMap = {};
+  }
+  return tokenDecimalsMap;
+}
+
+function resolveTokenAddress(token: string): `0x${string}` | null {
+  const map = getTokenAddressMap();
+  return map[normalizeToken(token)] ?? null;
+}
+
+function resolveTokenDecimals(token: string): number {
+  const map = getTokenDecimalsMap();
+  const value = map[normalizeToken(token)];
+  return Number.isFinite(value) ? value : 18;
+}
+
+let publicClient: ReturnType<typeof createPublicClient> | null = null;
+function getPublicClient() {
+  if (publicClient) return publicClient;
   const rpcUrl = process.env.ETH_HOODI_RPC;
-  if (!rpcUrl) return null;
+  if (!rpcUrl) {
+    throw new Error('[Config] Missing ETH_HOODI_RPC');
+  }
   const chainId = Number(process.env.HOODI_CHAIN_ID || DEFAULT_CHAIN_ID);
   const chain = defineChain({
     id: chainId,
     name: 'Hoodi',
     nativeCurrency: { name: 'Hoodi ETH', symbol: 'ETH', decimals: 18 },
-    rpcUrls: { default: { http: [rpcUrl] } },
+    rpcUrls: { default: { http: [rpcUrl] }, public: { http: [rpcUrl] } },
     testnet: true,
   });
-  return createPublicClient({ chain, transport: http(rpcUrl) });
+  publicClient = createPublicClient({ chain, transport: http(rpcUrl) });
+  return publicClient;
 }
 
-function parseOrder(doc: { content?: string | null }): StoredOrder | null {
-  if (!doc.content) return null;
+function isPendingDeposit(status: OrderStatus | undefined): boolean {
+  return status === 'PENDING_DEPOSIT';
+}
+
+function parseRequiredAmount(amount: string, token: string): bigint | null {
+  const trimmed = amount.trim();
+  if (!trimmed) return null;
+  if (trimmed.includes('.')) {
+    try {
+      return parseUnits(trimmed, resolveTokenDecimals(token));
+    } catch (err) {
+      console.warn('[Hoodi] Failed to parse decimal amount; skipping.', err);
+      return null;
+    }
+  }
   try {
-    return JSON.parse(doc.content) as StoredOrder;
-  } catch {
+    return BigInt(trimmed);
+  } catch (err) {
+    console.warn('[Hoodi] Failed to parse integer amount; skipping.', err);
     return null;
   }
 }
 
-function parseRequiredAmount(order: StoredOrder): bigint | null {
-  const candidate = order.originalAmount ?? order.remainingAmount;
-  if (!candidate) return null;
+async function getDepositBalance(token: string, address: Address): Promise<bigint> {
+  const client = getPublicClient();
+  if (NATIVE_TOKENS.has(normalizeToken(token))) {
+    return client.getBalance({ address });
+  }
+  const tokenAddress = resolveTokenAddress(token);
+  if (!tokenAddress) {
+    console.warn(`[Hoodi] Missing token address for ${token}.`);
+    return 0n;
+  }
+  return client.readContract({
+    address: tokenAddress,
+    abi: ERC20_ABI,
+    functionName: 'balanceOf',
+    args: [address],
+  });
+}
+
+async function getOrderToken(order: StoredOrder): Promise<OrderPayload | null> {
   try {
-    return BigInt(candidate);
-  } catch {
+    return decryptOrderPayload(order.encryptedOrder);
+  } catch (err) {
+    console.warn('[Hoodi] Failed to decrypt order payload; skipping deposit check.', err);
     return null;
   }
 }
@@ -55,64 +156,94 @@ async function resolveDepositAddress(order: StoredOrder): Promise<Address | null
   return null;
 }
 
-async function checkDepositsOnce(): Promise<void> {
-  const client = getHoodiClient();
-  if (!client) return;
+async function markLive(ddocId: string, order: StoredOrder): Promise<void> {
+  await updateDoc(
+    ddocId,
+    JSON.stringify({
+      ...order,
+      status: 'LIVE',
+      depositConfirmedAt: Date.now(),
+    })
+  );
+}
 
-  const balanceCache = new Map<string, bigint>();
-  let skip = 0;
+let inFlight = false;
+async function checkPendingDeposits(): Promise<void> {
+  if (inFlight) return;
+  inFlight = true;
 
-  while (true) {
-    const { ddocs, hasNext } = await listDocs(PAGE_LIMIT, skip);
-    for (const doc of ddocs) {
-      if (!doc.ddocId) continue;
-      const parsed = parseOrder(doc);
-      if (!parsed || parsed.status !== 'PENDING_DEPOSIT') continue;
+  try {
+    const balanceCache = new Map<string, bigint>();
+    let skip = 0;
+    while (true) {
+      const { ddocs, hasNext } = await listDocs(PAGE_LIMIT, skip);
+      for (const doc of ddocs) {
+        if (!doc.ddocId || !doc.content) continue;
+        let parsed: StoredOrder | null = null;
+        try {
+          parsed = JSON.parse(doc.content) as StoredOrder;
+        } catch {
+          continue;
+        }
+        if (!parsed || !isPendingDeposit(parsed.status)) continue;
 
-      const depositAddress = await resolveDepositAddress(parsed);
-      if (!depositAddress) continue;
+        const payload = await getOrderToken(parsed);
+        if (!payload) continue;
 
-      const required = parseRequiredAmount(parsed);
-      if (required === null) continue;
+        const depositAddress = await resolveDepositAddress(parsed);
+        if (!depositAddress) continue;
 
-      const key = depositAddress.toLowerCase();
-      let balance = balanceCache.get(key);
-      if (balance === undefined) {
-        balance = await client.getBalance({ address: depositAddress });
-        balanceCache.set(key, balance);
+        const required = parseRequiredAmount(parsed.originalAmount || payload.amount, payload.tokenIn);
+        if (!required || required <= 0n) continue;
+
+        const cacheKey = `${normalizeToken(payload.tokenIn)}:${depositAddress.toLowerCase()}`;
+        let balance = balanceCache.get(cacheKey);
+        if (balance === undefined) {
+          try {
+            balance = await getDepositBalance(payload.tokenIn, depositAddress);
+            balanceCache.set(cacheKey, balance);
+          } catch (err) {
+            console.warn('[Hoodi] Failed to read deposit balance; skipping.', err);
+            continue;
+          }
+        }
+
+        if (balance >= required) {
+          await markLive(doc.ddocId, parsed);
+          console.log('[Hoodi] Deposit confirmed, order LIVE:', doc.ddocId);
+        }
       }
 
-      if (balance >= required) {
-        await updateDoc(
-          doc.ddocId,
-          JSON.stringify({
-            ...parsed,
-            status: 'LIVE',
-            depositConfirmedAt: Date.now(),
-          })
-        );
-        console.log('[Hoodi] Deposit confirmed, order LIVE:', doc.ddocId);
-      }
+      if (!hasNext) break;
+      skip += PAGE_LIMIT;
     }
-
-    if (!hasNext) break;
-    skip += PAGE_LIMIT;
+  } finally {
+    inFlight = false;
   }
 }
 
 export function startHoodiDepositWatcher(): void {
+  const enabled = parseBool(
+    process.env.HOODI_DEPOSIT_WATCHER_ENABLED,
+    Boolean(process.env.ETH_HOODI_RPC)
+  );
+  if (!enabled) return;
+
   if (!process.env.ETH_HOODI_RPC) {
-    console.log('[Hoodi] ETH_HOODI_RPC not set; deposit watcher disabled');
+    console.warn('[Hoodi] ETH_HOODI_RPC missing; deposit watcher disabled.');
     return;
   }
-  const intervalMs = Number(process.env.HOODI_DEPOSIT_POLL_MS || 15000);
+
+  const intervalMs = Number(
+    process.env.HOODI_DEPOSIT_INTERVAL_MS || process.env.HOODI_DEPOSIT_POLL_MS || 15000
+  );
   console.log(`[Hoodi] Deposit watcher active (interval ${intervalMs}ms)`);
+  checkPendingDeposits().catch((err) => {
+    console.error('[Hoodi] Deposit watcher error:', err);
+  });
   setInterval(() => {
-    checkDepositsOnce().catch((err) => {
-      console.error('[Hoodi] Deposit watcher error', err);
+    checkPendingDeposits().catch((err) => {
+      console.error('[Hoodi] Deposit watcher error:', err);
     });
   }, intervalMs);
-  checkDepositsOnce().catch((err) => {
-    console.error('[Hoodi] Deposit watcher error', err);
-  });
 }

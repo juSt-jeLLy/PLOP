@@ -216,10 +216,10 @@ async function matchingCycle(): Promise<void> {
 
 app.listen(PORT, () => {
   console.log(`[Engine] listening on ${PORT}`);
+  startHoodiDepositWatcher();
   setInterval(() => {
     matchingCycle().catch((err) => {
       console.error('[Engine] Matching cycle failed:', err);
     });
   }, POLL_INTERVAL_MS);
-  startHoodiDepositWatcher();
 });
