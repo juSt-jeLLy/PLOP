@@ -76,10 +76,12 @@ async function fetchTransferEntries(transferId: string, walletId: string, coin: 
     console.warn('[Webhooks] BitGo transfer lookup failed', res.status);
     return [];
   }
-  const payload = await res.json().catch(() => null);
+  const payload = (await res
+    .json()
+    .catch(() => null)) as { entries?: Array<{ address?: string }> } | null;
   const entries = Array.isArray(payload?.entries) ? payload.entries : [];
   const addresses = entries
-    .map((entry: { address?: unknown }) => (typeof entry.address === 'string' ? entry.address : null))
+    .map((entry) => (typeof entry.address === 'string' ? entry.address : null))
     .filter((value): value is string => Boolean(value));
   return Array.from(new Set(addresses.map(normalizeAddress)));
 }
