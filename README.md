@@ -16,6 +16,12 @@ See detailed build steps in [SETUP.MD](SETUP.MD) and full design notes in [DESCR
 - Supports partial fills with residual orders.
 - Refunds cancelled or expired orders automatically.
 
+## Why it matters
+
+- Large trades shouldn’t leak intent or move markets.
+- PLOP keeps order flow private while still settling on-chain with institutional-grade controls.
+- It proves ENS can be a programmable privacy layer, not just a name registry.
+
 ## Why this is different
 
 - ENS is used as an actual privacy primitive: session addresses rotate automatically and do not expose the trader’s wallet.
@@ -23,7 +29,7 @@ See detailed build steps in [SETUP.MD](SETUP.MD) and full design notes in [DESCR
 - Settlement uses BitGo MPC with whitelists and velocity rules, designed for institutional controls.
 - Cross-chain by design: ENS identity on Sepolia, funds on Hoodi.
 
-## Demo highlights
+## Highlights
 
 - Built around ENS auto-rotation (explicitly requested in ENS prize briefs).
 - End-to-end flow works today with real testnet deposits and BitGo MPC settlement.
