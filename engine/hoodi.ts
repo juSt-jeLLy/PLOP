@@ -3,7 +3,6 @@ import { createPublicClient, http, parseAbi, parseUnits } from 'viem';
 import type { OrderPayload, OrderStatus, StoredOrder } from '../types';
 import { decryptOrderPayload } from './crypto.js';
 import { listDocs, updateDoc } from './orders.js';
-import { getTextRecord } from './session.js';
 import { refundDeposit } from './settlement.js';
 
 const PAGE_LIMIT = 50;
@@ -219,12 +218,9 @@ async function checkPendingDeposits(): Promise<void> {
         const payload = await getOrderPayload(parsed);
         if (!payload) continue;
 
-        // Resolve deposit address from stored field or ENS text record
-        let depositAddress = parsed.depositAddress;
-        if (!depositAddress && parsed.sessionSubname) {
-          depositAddress =
-            (await getTextRecord(parsed.sessionSubname, 'plop.deposit')) ?? undefined;
-        }
+        const depositAddress =
+          parsed.depositAddress
+          ?? (typeof payload.depositAddress === 'string' ? payload.depositAddress : undefined);
         if (!depositAddress) continue;
 
         const required = parseRequiredAmount(

@@ -3,6 +3,7 @@ import type { Request, Response } from 'express';
 
 import type { BitgoWebhookPayload, OrderStatus, StoredOrder } from '../types';
 import { getTextRecord, rotateSessionAddress, setTextRecord } from './session.js';
+import { decryptOrderPayload } from './crypto.js';
 import { listDocs, updateDoc } from './orders.js';
 
 type RawBodyRequest = Request & { rawBody?: string };
@@ -160,9 +161,14 @@ async function markOrdersLiveByDepositAddress(address: string): Promise<void> {
       const status = parsed.status as OrderStatus | undefined;
       if (!isPendingDeposit(status)) continue;
 
-      let depositAddress = parsed.depositAddress;
-      if (!depositAddress && parsed.sessionSubname) {
-        depositAddress = await getTextRecord(parsed.sessionSubname, 'plop.deposit') ?? undefined;
+      let depositAddress: string | undefined = parsed.depositAddress;
+      try {
+        if (!depositAddress) {
+          const payload = decryptOrderPayload(parsed.encryptedOrder);
+          depositAddress = typeof payload.depositAddress === 'string' ? payload.depositAddress : undefined;
+        }
+      } catch {
+        depositAddress = undefined;
       }
       if (!depositAddress) continue;
 

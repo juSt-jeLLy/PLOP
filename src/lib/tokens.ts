@@ -22,6 +22,24 @@ export function getDefaultPairs(): string[] {
   if (cachedPairs.length === 0) {
     cachedPairs = ['ETH/ETH']
   }
+  const seen = new Set(
+    cachedPairs.map((pair) => {
+      const { base, quote } = parseTokenPair(pair)
+      return `${normalizeToken(base)}/${normalizeToken(quote)}`
+    })
+  )
+  const withReverse = [...cachedPairs]
+  cachedPairs.forEach((pair) => {
+    const { base, quote } = parseTokenPair(pair)
+    if (normalizeToken(base) === normalizeToken(quote)) return
+    const reverse = `${quote}/${base}`
+    const key = `${normalizeToken(quote)}/${normalizeToken(base)}`
+    if (!seen.has(key)) {
+      seen.add(key)
+      withReverse.push(reverse)
+    }
+  })
+  cachedPairs = withReverse
   return cachedPairs
 }
 

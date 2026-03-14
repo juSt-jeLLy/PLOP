@@ -55,7 +55,7 @@ function addr(bytes32 node) external view returns (address payable);
 // Called by engine after each settlement — increments nonce, changes address
 function rotateAddress(bytes32 node) external onlyEngine;
 
-// Engine writes BitGo deposit address here on session create
+// Engine writes session metadata here (active/pairs/receipts/settlement)
 function setText(bytes32 node, string calldata key, string calldata value) 
   external onlyEngine;
 ```
@@ -343,14 +343,23 @@ const { address } = await walletInstance.createAddress({
 });
 ```
 
-### 1.3 — Write Deposit Address to ENS Text Record (ENS)
+Note: the deposit address is returned via the engine API and embedded in the encrypted order payload. It is **not** written to ENS.
+
+### 1.3 — Write Session Metadata to ENS (ENS)
 
 ```typescript
 await engineWallet.writeContract({
   address: DARK_POOL_RESOLVER_ADDRESS,
   abi: DarkPoolResolverABI,
   functionName: 'setText',
-  args: [node, 'plop.deposit', bitgoDepositAddress],
+  args: [node, 'plop.active', 'true'],
+});
+
+await engineWallet.writeContract({
+  address: DARK_POOL_RESOLVER_ADDRESS,
+  abi: DarkPoolResolverABI,
+  functionName: 'setText',
+  args: [node, 'plop.pairs', 'ETH/ETH'],
 });
 
 // Encrypt settlement instructions client-side with ENGINE_PUBLIC_KEY
@@ -480,34 +489,38 @@ app.post('/webhooks/bitgo', express.raw({ type: 'application/json' }), async (re
   if (event.type === 'transfer' && event.state === 'confirmed') {
     const depositAddress = event.transfer.entries
       .find((e: any) => e.value > 0)?.address;
-    await activateOrder(depositAddress);
+    await activateOrderByDeposit(depositAddress);
   }
 
   res.status(200).send('ok');
 });
 ```
 
-> **Local Hoodi fallback:** if BitGo webhooks aren’t reachable in local testing, the engine can poll Hoodi balances and mark orders LIVE based on `depositAddress` + `originalAmount`.
+> **Local Hoodi fallback:** if BitGo webhooks aren’t reachable in local testing, the engine can poll Hoodi balances and mark orders LIVE based on the encrypted deposit address + `originalAmount`.
 
 ### 3.2 — Activate Order in Fileverse (Fileverse)
-Find the ddocId by searching Fileverse for the deposit address, then update status to LIVE.
+Find the matching order by decrypting payloads and comparing the encrypted `depositAddress`, then update status to LIVE.
 
 ```typescript
-async function activateOrder(depositAddress: string) {
-  // Search for the pending order matching this deposit address
-  const results = await searchDocs(depositAddress);
-  const match = results.nodes?.find((n: any) => {
-    const payload = JSON.parse(n.content ?? '{}');
-    return payload.status === 'PENDING_DEPOSIT';
-  });
-  if (!match) return;
-
-  const existing = JSON.parse(match.content);
-  await updateDoc(match.ddocId, JSON.stringify({
-    ...existing,
-    status: 'LIVE',
-    activatedAt: Date.now(),
-  }));
+async function activateOrderByDeposit(depositAddress: string) {
+  let skip = 0;
+  while (true) {
+    const { ddocs, hasNext } = await listDocs(50, skip);
+    for (const doc of ddocs) {
+      const payload = JSON.parse(doc.content ?? '{}');
+      if (payload.status !== 'PENDING_DEPOSIT') continue;
+      const decrypted = decryptOrderPayload(payload.encryptedOrder);
+      if (decrypted.depositAddress?.toLowerCase() !== depositAddress.toLowerCase()) continue;
+      await updateDoc(doc.ddocId, JSON.stringify({
+        ...payload,
+        status: 'LIVE',
+        activatedAt: Date.now(),
+      }));
+      return;
+    }
+    if (!hasNext) break;
+    skip += 50;
+  }
 }
 ```
 

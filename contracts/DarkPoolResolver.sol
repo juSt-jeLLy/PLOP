@@ -94,7 +94,7 @@ contract DarkPoolResolver is IExtendedResolver {
         return textRecords[node][key];
     }
 
-    /// @notice Engine-controlled metadata updates (deposit address, receipts, etc.).
+    /// @notice Engine-controlled metadata updates (receipts, settlement, status, etc.).
     function setText(bytes32 node, string calldata key, string calldata value)
         external
         onlyEngineOrSettlementController(key)

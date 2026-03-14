@@ -16,7 +16,6 @@ import {
 import {
   generateSubname,
   getSettlementInstruction,
-  getTextRecord,
   resolveSessionAddress,
   setSessionMetadata,
 } from './session.js';
@@ -28,7 +27,7 @@ import { recordSettlementInstruction } from './settlementController.js';
 import { startHoodiDepositWatcher } from './hoodi.js';
 import { createBitgoWebhookHandler } from './webhooks.js';
 import { createDoc, getDoc, listDocs, updateDoc, waitForSync } from './orders.js';
-import { decryptOrderPayload } from './crypto.js';
+import { decryptOrderPayload, encryptForEngine } from './crypto.js';
 import { decryptStoredOrder, parseStoredOrder } from './orderStore.js';
 
 const PORT = Number(process.env.ENGINE_PORT || 3001);
@@ -117,7 +116,6 @@ app.post('/session', async (req, res) => {
 
     await setSessionMetadata(subname, {
       'plop.active': 'true',
-      'plop.deposit': depositAddress,
       'plop.pairs': pairs.join(','),
       'plop.receipts': '',
       ...(settlementBlob ? { 'plop.settlement': settlementBlob } : {}),
@@ -380,22 +378,25 @@ app.post('/orders', async (req, res) => {
       return;
     }
 
-    const depositAddress =
-      typeof depositOverride === 'string'
-        ? depositOverride
-        : (await getTextRecord(sessionSubname, 'plop.deposit')) ?? undefined;
+    const depositAddress = typeof depositOverride === 'string' ? depositOverride : undefined;
 
     if (!depositAddress) {
-      res.status(400).json({ error: 'deposit address not found for session' });
+      res.status(400).json({ error: 'deposit address not provided' });
       return;
     }
+
+    const enrichedPayload = {
+      ...payload,
+      depositAddress,
+      sessionSubname,
+    };
+    const encryptedOrderForStorage = encryptForEngine(JSON.stringify(enrichedPayload));
 
     const stored: StoredOrder = {
       ddocId: '',
       sessionSubname,
       status: 'PENDING_DEPOSIT',
-      encryptedOrder,
-      depositAddress,
+      encryptedOrder: encryptedOrderForStorage,
       originalAmount: payload.amount,
       remainingAmount: payload.amount,
       filledAmount: '0',

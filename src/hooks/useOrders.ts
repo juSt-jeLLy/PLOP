@@ -201,7 +201,10 @@ export function useOrders(options: UseOrdersOptions = {}) {
     try {
       const url = new URL(`${getEngineUrl()}/orders`)
       url.searchParams.set('sessionSubname', sessionSubname)
-      const res = await fetch(url.toString(), { headers: getEngineHeaders() })
+      const res = await fetch(url.toString(), {
+        headers: getEngineHeaders(),
+        cache: 'no-store',
+      })
       if (!res.ok) {
         console.warn('[Orders] Engine responded', res.status)
         return
@@ -300,6 +303,7 @@ export function useOrders(options: UseOrdersOptions = {}) {
           body: JSON.stringify({
             sessionSubname,
             encryptedOrder,
+            depositAddress: sessionDepositAddress || undefined,
           }),
         })
         if (!res.ok) {

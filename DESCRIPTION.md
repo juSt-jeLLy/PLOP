@@ -86,7 +86,6 @@ One resolver contract on Sepolia handles every *.plop.eth subname that will ever
 ```
 plop.pairs   = "ETH/USDC,WBTC/USDC"
 plop.active  = "true"
-plop.deposit = "0x4a3f..."  // BitGo Hoodi deposit address
 plop.receipts = "ddocId1,ddocId2"  // comma-separated Fileverse ddocIds
 ```
 
@@ -141,7 +140,7 @@ MPC key structure: You hold user key + backup key. BitGo holds key 3 and co-sign
 
 **Step 1 — Anonymous session identity (ENS on Ethereum Sepolia)**
 
-Trader connects wallet. Your app generates a throwaway subname — x7k2m.plop.eth — resolved by your custom wildcard DarkPoolResolver.sol on Ethereum Sepolia. The resolver computes a fresh derived address from keccak256(node, nonce, epoch). ENS text record stores: accepted pairs, active status, and the BitGo Hoodi deposit address.
+Trader connects wallet. Your app generates a throwaway subname — x7k2m.plop.eth — resolved by your custom wildcard DarkPoolResolver.sol on Ethereum Sepolia. The resolver computes a fresh derived address from keccak256(node, nonce, epoch). ENS text record stores: accepted pairs, active status, receipts, and encrypted settlement authorization (not the deposit address).
 
 **Step 2 — Encrypted order submission (Fileverse REST API)**
 
@@ -149,7 +148,7 @@ Trader fills order: sell token, buy token, amount, minimum acceptable price, TTL
 
 **Step 3 — Collateral deposit into BitGo MPC wallet (BitGo on Hoodi)**
 
-Trader deposits the exact sell amount into a BitGo self-custody MPC hot wallet address on Hoodi. This address was generated via `wallet.createAddress()` and stored in the ENS text record `plop.deposit`. BitGo fires a webhook when the deposit confirms. Only then does the order status update to LIVE in Fileverse.
+Trader deposits the exact sell amount into a BitGo self-custody MPC hot wallet address on Hoodi. This address was generated via `wallet.createAddress()` and returned by the engine API; it is embedded in the encrypted order payload, not stored in ENS. BitGo fires a webhook when the deposit confirms. Only then does the order status update to LIVE in Fileverse.
 
 **Step 4 — Off-chain matching (Node.js Engine)**
 
@@ -180,7 +179,7 @@ Encrypted receipt ddoc created for each party via `POST /api/ddocs`: tx hashes, 
 | https://docs.ens.domains/web/quickstart/ | Starting point — resolve names, read records |
 | https://docs.ens.domains/ensip/10/ | ENSIP-10 spec — wildcard resolution, resolve() function, interface ID 0x9061b923 |
 | https://docs.ens.domains/resolvers/writing/ | Write a custom resolver — addr(), resolve(), supportsInterface() |
-| https://docs.ens.domains/web/records | Text record API — plop.pairs, plop.active, plop.deposit, plop.receipts |
+| https://docs.ens.domains/web/records | Text record API — plop.pairs, plop.active, plop.receipts, plop.settlement |
 | https://docs.ens.domains/web/resolution/ | Resolution call chain — name → resolver → address |
 | https://docs.ens.domains/web/subdomains | Wildcard resolvers — unlimited subnames without registering each |
 | https://docs.ens.domains/learn/deployments | All Sepolia contract addresses |

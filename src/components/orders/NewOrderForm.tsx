@@ -29,6 +29,15 @@ const NewOrderForm: React.FC<NewOrderFormProps> = ({ onSubmit, isSubmitting, wal
   const [showSuccess, setShowSuccess] = useState(false)
   const demoPrice = getDemoPrice(pair)
   const { base, quote } = parseTokenPair(pair)
+  const payToken = orderType === 'BUY' ? quote : base
+  const receiveToken = orderType === 'BUY' ? base : quote
+  const amountValue = Number.parseFloat(amount)
+  const receiveAmount =
+    Number.isFinite(amountValue) && amountValue > 0 && Number.isFinite(demoPrice) && demoPrice && demoPrice > 0
+      ? orderType === 'BUY'
+        ? amountValue / demoPrice
+        : amountValue * demoPrice
+      : null
   const canSubmit = Boolean(amount) && Number.isFinite(demoPrice) && demoPrice! > 0
 
   const handleSubmit = () => {
@@ -76,7 +85,7 @@ const NewOrderForm: React.FC<NewOrderFormProps> = ({ onSubmit, isSubmitting, wal
         </div>
 
         <div>
-          <MonoLabel>Amount</MonoLabel>
+          <MonoLabel>Deposit Amount ({payToken})</MonoLabel>
           <input
             type="number"
             value={amount}
@@ -85,6 +94,14 @@ const NewOrderForm: React.FC<NewOrderFormProps> = ({ onSubmit, isSubmitting, wal
             disabled={!walletConnected}
             className={`mt-1.5 w-full bg-secondary border border-border rounded-lg px-3 py-2.5 font-mono text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary/50 ${!walletConnected ? 'opacity-60 cursor-not-allowed' : ''}`}
           />
+          <div className="mt-2 text-[11px] font-mono text-muted-foreground flex flex-col gap-1">
+            <span>
+              Pay (deposit): {amount || '—'} {payToken}
+            </span>
+            <span>
+              Receive (demo): {receiveAmount !== null ? receiveAmount.toFixed(6) : '—'} {receiveToken}
+            </span>
+          </div>
         </div>
 
         <div>

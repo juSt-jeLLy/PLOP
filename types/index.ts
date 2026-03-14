@@ -27,6 +27,8 @@ export type OrderPayload = {
   type: OrderSide;
   traderPublicKey: string;
   refundAddress?: string;
+  depositAddress?: string;
+  sessionSubname?: string;
 } & Record<string, unknown>;
 
 export interface StoredOrder {

@@ -245,14 +245,10 @@ async function main() {
   console.log('[Smoke] Verifying ENS text records...');
   const client = createPublicClient({ chain: sepolia, transport: http(requireEnv('ETH_SEPOLIA_RPC')) });
   const active = await client.getEnsText({ name: normalize(subname), key: 'plop.active' });
-  const deposit = await client.getEnsText({ name: normalize(subname), key: 'plop.deposit' });
   const pairs = await client.getEnsText({ name: normalize(subname), key: 'plop.pairs' });
   const settlement = await client.getEnsText({ name: normalize(subname), key: 'plop.settlement' });
 
   if (active !== 'true') throw new Error('[Smoke] ENS plop.active not set');
-  if (deposit?.toLowerCase() !== depositAddress.toLowerCase()) {
-    throw new Error('[Smoke] ENS plop.deposit mismatch');
-  }
   if (pairs !== 'ETH/ETH') throw new Error('[Smoke] ENS plop.pairs mismatch');
   if (!settlement || !settlement.startsWith('plop:v1:')) {
     throw new Error('[Smoke] ENS plop.settlement missing or malformed');
@@ -268,6 +264,8 @@ async function main() {
     ttlSeconds: 3600,
     type: 'SELL',
     traderPublicKey: encodeBase64(traderKeypair.publicKey),
+    depositAddress,
+    sessionSubname: subname,
   };
 
   const nonce = nacl.randomBytes(nacl.box.nonceLength);
@@ -287,7 +285,6 @@ async function main() {
       nonceB64: encodeBase64(nonce),
       ephemeralPublicKeyB64: encodeBase64(traderKeypair.publicKey),
     },
-    depositAddress,
     originalAmount: orderPayload.amount,
     remainingAmount: orderPayload.amount,
     filledAmount: '0',

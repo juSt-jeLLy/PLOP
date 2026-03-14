@@ -166,6 +166,7 @@ export function usePoolActivity() {
     try {
       const res = await fetch(`${getEngineUrl()}/orders/all`, {
         headers: getEngineHeaders(),
+        cache: 'no-store',
       })
       if (!res.ok) {
         console.warn('[Pool] Engine responded', res.status)

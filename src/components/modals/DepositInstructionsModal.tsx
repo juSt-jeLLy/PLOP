@@ -302,9 +302,12 @@ const DepositInstructionsModal: React.FC<DepositInstructionsModalProps> = ({ req
                     </div>
                   )}
                   <div>
-                    <MonoLabel>Amount</MonoLabel>
+                    <MonoLabel>Deposit Amount</MonoLabel>
                     <div className="font-mono text-base text-foreground">
                       {request.amount} {request.token}
+                    </div>
+                    <div className="text-[10px] font-mono text-muted-foreground">
+                      Token in (what you send to BitGo).
                     </div>
                   </div>
                   <div>

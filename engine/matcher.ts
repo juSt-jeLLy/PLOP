@@ -91,6 +91,8 @@ export function findMatch(orders: DecryptedOrder[]): MatchResult | null {
       const a = orders[i];
       const b = orders[j];
 
+      if (a.type === b.type) continue;
+
       const inversePair = a.tokenIn === b.tokenOut && a.tokenOut === b.tokenIn;
       if (!inversePair) continue;
 
@@ -153,7 +155,6 @@ export async function applyPartialFill(match: MatchResult): Promise<void> {
         sessionSubname: order.subname,
         status: 'LIVE',
         encryptedOrder: payload.encryptedOrder,
-        depositAddress: payload.depositAddress,
         originalAmount: payload.originalAmount,
         remainingAmount: newRemaining,
         filledAmount: newFilled,

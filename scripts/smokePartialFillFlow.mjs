@@ -286,6 +286,8 @@ async function createOrder({
     ttlSeconds: 3600,
     type,
     traderPublicKey: encodeBase64(traderKeypair.publicKey),
+    depositAddress,
+    sessionSubname: subname,
   };
 
   const encrypted = nacl.box(
@@ -303,7 +305,6 @@ async function createOrder({
       nonceB64: encodeBase64(nonce),
       ephemeralPublicKeyB64: encodeBase64(traderKeypair.publicKey),
     },
-    depositAddress,
     originalAmount: amountWei,
     remainingAmount: amountWei,
     filledAmount: '0',

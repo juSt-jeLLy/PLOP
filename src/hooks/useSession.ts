@@ -276,13 +276,11 @@ export function useSession(walletAddress?: string | null) {
     const ensClient = await getEnsClient()
     if (ensClient) {
       try {
-        const [deposit, active, resolved, settlement] = await Promise.all([
-          ensClient.getEnsText({ name: normalize(ensSubname), key: 'plop.deposit' }),
+        const [active, resolved, settlement] = await Promise.all([
           ensClient.getEnsText({ name: normalize(ensSubname), key: 'plop.active' }),
           ensClient.getEnsAddress({ name: normalize(ensSubname) }),
           ensClient.getEnsText({ name: normalize(ensSubname), key: 'plop.settlement' }),
         ])
-        depositAddress = deposit ?? null
         activeFlag = active ?? null
         derivedAddress = resolved ?? null
         settlementText = settlement ?? null
@@ -292,7 +290,7 @@ export function useSession(walletAddress?: string | null) {
     }
 
     const isActive = activeFlag === 'true'
-    if (!depositAddress && !isActive) {
+    if (!depositAddress) {
       try {
         const controller = new AbortController()
         const timeoutId = window.setTimeout(() => controller.abort(), 10000)

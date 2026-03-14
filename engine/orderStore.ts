@@ -76,7 +76,7 @@ export function decryptStoredOrder(order: StoredOrder): DecryptedOrder {
     ddocId: order.ddocId,
     subname: order.sessionSubname,
     node: namehash(normalize(order.sessionSubname)) as `0x${string}`,
-    depositAddress: order.depositAddress,
+    depositAddress: order.depositAddress ?? (typeof payload.depositAddress === 'string' ? payload.depositAddress : undefined),
     parentDdocId: order.parentDdocId ?? null,
     originalAmount: order.originalAmount,
     remainingAmount: order.remainingAmount,

@@ -76,9 +76,10 @@ graph TD
    - UI requests `/session` from engine.
    - Engine:
      - Creates BitGo deposit address.
-     - Writes ENS text records:
-       - `plop.deposit` = BitGo deposit address
+     - Writes ENS text records (no deposit address on-chain):
        - `plop.active` = true
+       - `plop.pairs` = allowed pairs
+       - `plop.receipts` = empty list
 
 2. Settlement authorization (privacy-preserving)
    - UI encrypts a settlement payload with the engine public key.
@@ -128,7 +129,7 @@ sequenceDiagram
   U->>UI: Connect wallet
   UI->>ENG: POST /session
   ENG->>BG: create deposit address
-  ENG->>ENS: setText(plop.deposit, plop.active)
+  ENG->>ENS: setText(plop.active, plop.pairs)
   UI->>U: Sign EIP-712 settlement auth
   UI->>ENG: POST /session/settlement (payload + signature)
   ENG->>ENS: setText(plop.settlement)
@@ -167,7 +168,7 @@ Enable Developer Mode at `ddocs.new`, create an API key, deploy a Fileverse serv
 Create MPC keys and a hot wallet using `wallets().add()` (not `generateWallet`). Use coin `hteth` and import `Hteth` for sends. Create a destination whitelist policy and a velocity limit policy, and register a transfer webhook to `/webhooks/bitgo`. At match time the engine **updates** the whitelist via `updatePolicyRule` (never creates new rules).
 
 6. Session creation  
-When a wallet connects, the frontend derives a subname (e.g., `abcde.plop.eth`) and calls `POST /session`. The engine creates a BitGo deposit address and writes ENS text records `plop.deposit` and `plop.active=true`. The deposit address is cached in local storage for UI refreshes.
+When a wallet connects, the frontend derives a subname (e.g., `abcde.plop.eth`) and calls `POST /session`. The engine creates a BitGo deposit address and writes ENS text records `plop.active=true`, `plop.pairs`, and `plop.receipts`. The deposit address is **returned via the API only** (cached locally and embedded in encrypted orders), not published in ENS.
 
 7. Settlement authorization  
 The frontend encrypts a settlement payload (recipient, chainId, expiry, nonce) with `ENGINE_PUBLIC_KEY`, signs an EIP‑712 message, and posts to `POST /session/settlement`. The engine verifies the signature through `SettlementController` and writes the ciphertext to `plop.settlement`.
@@ -197,6 +198,7 @@ Critical gotchas from the build docs: use `getEnsAddress()` for wildcard ENS res
 - Orders are encrypted client-side before going to Fileverse.
 - ENS names are rotating; session identity is decoupled from wallet address.
 - Settlement recipient data is stored encrypted in ENS text records.
+- Deposit addresses are returned via the engine API and embedded in encrypted orders, not published in ENS.
 - Deposits and settlement happen on Hoodi; ENS stays on Sepolia.
 - BitGo creates unique deposit addresses per session/order, reducing linkability. Settlement still comes from the same MPC wallet, so privacy is improved but not absolute.
 
@@ -205,7 +207,7 @@ Critical gotchas from the build docs: use `getEnsAddress()` for wildcard ENS res
 - `DarkPoolResolver.sol`
   - ENS wildcard resolver (ENSIP-10).
   - Deterministic rotating address per session.
-  - Stores text records for `plop.deposit`, `plop.receipts`, `plop.settlement`.
+  - Stores text records for `plop.receipts`, `plop.settlement`, `plop.active`, `plop.pairs`.
 
 - `SettlementController.sol`
   - Verifies EIP-712 signatures.
