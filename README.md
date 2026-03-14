@@ -143,6 +143,7 @@ sequenceDiagram
 - ENS names are rotating; session identity is decoupled from wallet address.
 - Settlement recipient data is stored encrypted in ENS text records.
 - Deposits and settlement happen on Hoodi; ENS stays on Sepolia.
+- BitGo creates unique deposit addresses per session/order, reducing linkability. Settlement still comes from the same MPC wallet, so privacy is improved but not absolute.
 
 ## Smart contracts
 
