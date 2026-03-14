@@ -2,7 +2,6 @@ import { SessionIdentity, CollateralInfo, SessionStats } from '@/types'
 
 export const mockSession: SessionIdentity = {
   ensSubname: 'x7k2m.plop.eth',
-  derivedAddress: '0x4a3f8b2c1d9e5f7a3b2c1d9e5f7a3b2c',
   status: 'ACTIVE',
   sessionNonce: 4
 }

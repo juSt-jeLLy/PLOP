@@ -2,7 +2,7 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 import type { Request, Response } from 'express';
 
 import type { BitgoWebhookPayload, OrderStatus, StoredOrder } from '../types';
-import { getTextRecord, rotateSessionAddress, setTextRecord } from './session.js';
+import { getTextRecord, setTextRecord } from './session.js';
 import { decryptOrderPayload } from './crypto.js';
 import { listDocs, updateDoc } from './orders.js';
 
@@ -141,6 +141,39 @@ function isPendingDeposit(status: OrderStatus | undefined): boolean {
   return status === 'PENDING_DEPOSIT';
 }
 
+function isActiveStatus(status: OrderStatus | undefined): boolean {
+  return (
+    status === 'PENDING_DEPOSIT'
+    || status === 'LIVE'
+    || status === 'IN_SETTLEMENT'
+    || status === 'PARTIALLY_FILLED_IN_SETTLEMENT'
+    || status === 'PARTIALLY_FILLED'
+  );
+}
+
+async function hasActiveOrdersForSession(sessionSubname: string): Promise<boolean> {
+  let skip = 0;
+  while (true) {
+    const { ddocs, hasNext } = await listDocs(PAGE_LIMIT, skip);
+    for (const doc of ddocs) {
+      if (!doc.ddocId || !doc.content) continue;
+      let parsed: StoredOrder | null = null;
+      try {
+        parsed = JSON.parse(doc.content) as StoredOrder;
+      } catch {
+        continue;
+      }
+      if (!parsed || parsed.sessionSubname !== sessionSubname) continue;
+      if (isActiveStatus(parsed.status as OrderStatus | undefined)) {
+        return true;
+      }
+    }
+    if (!hasNext) break;
+    skip += PAGE_LIMIT;
+  }
+  return false;
+}
+
 async function markOrdersLiveByDepositAddress(address: string): Promise<void> {
   let skip = 0;
   const target = normalizeAddress(address);
@@ -252,7 +285,11 @@ async function handleTransferConfirmed(payload: BitgoWebhookPayload): Promise<vo
       const active = await getTextRecord(parsed.sessionSubname, 'plop.active');
       if (active === 'false') continue;
 
-      await rotateSessionAddress(parsed.sessionSubname);
+      const stillActive = await hasActiveOrdersForSession(parsed.sessionSubname);
+      if (stillActive) {
+        continue;
+      }
+
       await setTextRecord(parsed.sessionSubname, 'plop.active', 'false');
     }
     if (!hasNext) break;

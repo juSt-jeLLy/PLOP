@@ -1,4 +1,5 @@
 import { createPublicClient, createWalletClient, http, type Address, type Hash } from 'viem';
+import { randomBytes } from 'crypto';
 import { privateKeyToAccount } from 'viem/accounts';
 import { sepolia } from 'viem/chains';
 import { namehash, normalize } from 'viem/ens';
@@ -15,13 +16,6 @@ const RESOLVER_ABI = [
       { name: 'key', type: 'string' },
       { name: 'value', type: 'string' },
     ],
-    outputs: [],
-  },
-  {
-    type: 'function',
-    name: 'rotateAddress',
-    stateMutability: 'nonpayable',
-    inputs: [{ name: 'node', type: 'bytes32' }],
     outputs: [],
   },
 ] as const;
@@ -79,17 +73,13 @@ export async function waitForPendingNonceClear(timeoutMs = 180000): Promise<void
   throw new Error('[ENS] Pending transactions still in flight; wait for confirmations and retry');
 }
 
-export function generateSubname(walletAddress: Address): string {
-  const prefix = walletAddress.slice(2, 7).toLowerCase();
-  return `${prefix}.plop.eth`;
+export function generateSubname(_walletAddress: Address): string {
+  const suffix = randomBytes(3).toString('hex');
+  return `${suffix}.plop.eth`;
 }
 
 export function getEnsNode(ensSubname: string): `0x${string}` {
   return namehash(normalize(ensSubname)) as `0x${string}`;
-}
-
-export async function resolveSessionAddress(ensSubname: string): Promise<Address | null> {
-  return ensPublicClient.getEnsAddress({ name: normalize(ensSubname) });
 }
 
 export async function getTextRecord(ensSubname: string, key: string): Promise<string | null> {
@@ -168,23 +158,4 @@ export async function setSessionMetadata(
     hashes.push(txHash);
   }
   return hashes;
-}
-
-export async function rotateSessionAddress(ensSubname: string): Promise<Hash> {
-  return withEnsWriteLock(async () => {
-    await waitForPendingNonceClear();
-    const node = getEnsNode(ensSubname);
-    const txHash = await writeWithRetry(
-      () =>
-        ensWalletClient.writeContract({
-          address: resolverAddress,
-          abi: RESOLVER_ABI,
-          functionName: 'rotateAddress',
-          args: [node],
-        }),
-      'rotateAddress'
-    );
-    await ensPublicClient.waitForTransactionReceipt({ hash: txHash, timeout: 180000 });
-    return txHash;
-  });
 }

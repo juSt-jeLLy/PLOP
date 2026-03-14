@@ -16,7 +16,6 @@ import {
 import {
   generateSubname,
   getSettlementInstruction,
-  resolveSessionAddress,
   setSessionMetadata,
 } from './session.js';
 import {
@@ -563,21 +562,22 @@ async function matchingCycle(): Promise<void> {
     match = findMatch(orders);
     if (!match) return;
 
-    await applyPartialFill(match);
-
     const [instructionA, instructionB] = await Promise.all([
       getSettlementInstruction(match.orderA.subname),
       getSettlementInstruction(match.orderB.subname),
     ]);
 
-    const [addressA, addressB] = await Promise.all([
-      instructionA?.recipient ?? resolveSessionAddress(match.orderA.subname),
-      instructionB?.recipient ?? resolveSessionAddress(match.orderB.subname),
-    ]);
-
+    const addressA = instructionA?.recipient ?? null;
+    const addressB = instructionB?.recipient ?? null;
     if (!addressA || !addressB) {
-      throw new Error('[ENS] Failed to resolve session addresses');
+      console.warn('[Engine] Missing settlement recipient; skipping match', {
+        orderA: match.orderA.ddocId,
+        orderB: match.orderB.ddocId,
+      });
+      return;
     }
+
+    await applyPartialFill(match);
 
     const testRecipient = process.env.ENGINE_TEST_RECIPIENT;
     const settlementAddressA = testRecipient || addressA;

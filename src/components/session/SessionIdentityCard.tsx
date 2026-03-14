@@ -2,7 +2,6 @@ import React from 'react'
 import GlassCard from '@/components/ui/GlassCard'
 import MonoLabel from '@/components/ui/MonoLabel'
 import AddressDisplay from '@/components/ui/AddressDisplay'
-import AddressRotationAnimation from '@/components/ui/AddressRotationAnimation'
 import StatusBadge from '@/components/ui/StatusBadge'
 import GradientButton from '@/components/ui/GradientButton'
 import { SessionIdentity, SettlementState } from '@/types'
@@ -34,7 +33,6 @@ const SessionIdentityCard: React.FC<SessionIdentityCardProps> = ({
   onReloadConfig,
   error,
 }) => {
-  const hasDerived = session.derivedAddress && session.derivedAddress !== '—'
   const hasDeposit = Boolean(session.depositAddress)
 
   const settlementConfig: Record<SettlementState, { label: string; className: string }> = {
@@ -82,22 +80,6 @@ const SessionIdentityCard: React.FC<SessionIdentityCardProps> = ({
           {session.ensSubname}
         </div>
         <div className="flex flex-col gap-2">
-          <div>
-            <MonoLabel>ENS Address (Sepolia)</MonoLabel>
-            {isRotating ? (
-              <AddressRotationAnimation
-                fromAddress={session.derivedAddress}
-                toAddress={'0x' + Array.from({ length: 32 }, () => '0123456789abcdef'[Math.floor(Math.random() * 16)]).join('')}
-                onComplete={() => {}}
-              />
-            ) : hasDerived ? (
-              <AddressDisplay address={session.derivedAddress} truncate />
-            ) : (
-              <span className="text-xs text-muted-foreground font-mono">
-                Awaiting ENS resolution
-              </span>
-            )}
-          </div>
           <div>
             <MonoLabel>Settlement Recipient (Hoodi)</MonoLabel>
             {walletAddress ? (

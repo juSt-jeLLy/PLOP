@@ -8,7 +8,6 @@ import { getDefaultPairs } from '@/lib/tokens'
 
 const DEFAULT_SESSION: SessionIdentity = {
   ensSubname: '—',
-  derivedAddress: '—',
   status: 'INACTIVE',
   sessionNonce: 0,
   depositAddress: null,
@@ -102,34 +101,40 @@ function buildEncryptedSettlementPayload(
   return `plop:v1:${btoa(JSON.stringify(envelope))}`
 }
 
-function deriveSubname(walletAddress: string) {
-  const prefix = walletAddress.slice(2, 7).toLowerCase()
-  return `${prefix}.plop.eth`
-}
-
 function getSessionStorageKey(walletAddress: string) {
   return `plop.session.${walletAddress.toLowerCase()}`
 }
 
-function loadStoredDeposit(walletAddress: string): string | null {
+type StoredSession = { ensSubname?: string; depositAddress?: string }
+
+function loadStoredSession(walletAddress: string): StoredSession | null {
   if (typeof window === 'undefined') return null
   try {
     const raw = window.localStorage.getItem(getSessionStorageKey(walletAddress))
     if (!raw) return null
-    const parsed = JSON.parse(raw) as { depositAddress?: string }
-    return typeof parsed.depositAddress === 'string' ? parsed.depositAddress : null
+    const parsed = JSON.parse(raw) as StoredSession
+    return parsed
   } catch {
     return null
   }
 }
 
-function storeDeposit(walletAddress: string, depositAddress: string) {
+function storeSession(walletAddress: string, session: StoredSession) {
   if (typeof window === 'undefined') return
   try {
     window.localStorage.setItem(
       getSessionStorageKey(walletAddress),
-      JSON.stringify({ depositAddress })
+      JSON.stringify(session)
     )
+  } catch {
+    // ignore storage failures
+  }
+}
+
+function clearStoredSession(walletAddress: string) {
+  if (typeof window === 'undefined') return
+  try {
+    window.localStorage.removeItem(getSessionStorageKey(walletAddress))
   } catch {
     // ignore storage failures
   }
@@ -267,30 +272,34 @@ export function useSession(walletAddress?: string | null) {
     }
     setIsRotating(true)
     setSessionError(null)
-    const ensSubname = deriveSubname(walletAddress)
-    let depositAddress: string | null = loadStoredDeposit(walletAddress)
-    let derivedAddress: string | null = null
+    const stored = loadStoredSession(walletAddress)
+    let ensSubname: string | null = stored?.ensSubname ?? null
+    let depositAddress: string | null = stored?.depositAddress ?? null
     let activeFlag: string | null = null
     let settlementText: string | null = null
 
     const ensClient = await getEnsClient()
-    if (ensClient) {
+    if (ensClient && ensSubname) {
       try {
-        const [active, resolved, settlement] = await Promise.all([
+        const [active, settlement] = await Promise.all([
           ensClient.getEnsText({ name: normalize(ensSubname), key: 'plop.active' }),
-          ensClient.getEnsAddress({ name: normalize(ensSubname) }),
           ensClient.getEnsText({ name: normalize(ensSubname), key: 'plop.settlement' }),
         ])
         activeFlag = active ?? null
-        derivedAddress = resolved ?? null
         settlementText = settlement ?? null
       } catch (err) {
         console.warn('[Session] ENS lookup failed', err)
       }
     }
 
-    const isActive = activeFlag === 'true'
-    if (!depositAddress) {
+    if (activeFlag === 'false') {
+      clearStoredSession(walletAddress)
+      ensSubname = null
+      depositAddress = null
+      settlementText = null
+    }
+
+    if (!ensSubname) {
       try {
         const controller = new AbortController()
         const timeoutId = window.setTimeout(() => controller.abort(), 10000)
@@ -303,16 +312,10 @@ export function useSession(walletAddress?: string | null) {
         window.clearTimeout(timeoutId)
         if (res.ok) {
           const payload = await res.json()
+          ensSubname = typeof payload?.subname === 'string' ? payload.subname : ensSubname
           depositAddress = typeof payload?.depositAddress === 'string' ? payload.depositAddress : depositAddress
-          if (depositAddress) {
-            storeDeposit(walletAddress, depositAddress)
-          }
-          if (!derivedAddress && ensClient) {
-            try {
-              derivedAddress = await ensClient.getEnsAddress({ name: normalize(ensSubname) })
-            } catch {
-              // ignore resolution failures
-            }
+          if (ensSubname) {
+            storeSession(walletAddress, { ensSubname, depositAddress: depositAddress ?? undefined })
           }
         } else {
           setSessionError(`[Session] Engine responded with ${res.status}`)
@@ -335,6 +338,7 @@ export function useSession(walletAddress?: string | null) {
 
     if (
       walletAddress
+      && ensSubname
       && !settlementText
       && engineConfig?.enginePublicKey
       && engineConfig?.settlementController
@@ -354,8 +358,7 @@ export function useSession(walletAddress?: string | null) {
         : 'INACTIVE'
 
     setSession({
-      ensSubname,
-      derivedAddress: derivedAddress || '—',
+      ensSubname: ensSubname || '—',
       status,
       sessionNonce: 0,
       depositAddress: depositAddress ?? null,
@@ -367,25 +370,21 @@ export function useSession(walletAddress?: string | null) {
     void refreshSession()
   }, [refreshSession])
 
-  const rotateAddress = useCallback(() => {
-    void refreshSession()
-  }, [refreshSession])
-
   const retrySettlement = useCallback(() => {
-    if (!walletAddress) return
+    if (!walletAddress || session.ensSubname === '—') return
     settlementAttemptedRef.current = false
     settlementInFlightRef.current = true
-    void authorizeSettlement(deriveSubname(walletAddress))
+    void authorizeSettlement(session.ensSubname)
       .finally(() => {
         settlementInFlightRef.current = false
       })
-  }, [walletAddress, authorizeSettlement])
+  }, [walletAddress, authorizeSettlement, session.ensSubname])
 
   return {
     session,
     collateral,
     stats,
-    rotateAddress,
+    refreshSession,
     isRotating,
     sessionError,
     settlementState,

@@ -30,7 +30,7 @@ const DashboardPage: React.FC = () => {
     session,
     collateral,
     stats,
-    rotateAddress,
+    refreshSession,
     isRotating,
     sessionError,
     settlementState,
@@ -76,7 +76,7 @@ const DashboardPage: React.FC = () => {
           <LeftSidebar>
             <SessionIdentityCard
               session={session}
-              onRotate={rotateAddress}
+              onRotate={refreshSession}
               isRotating={isRotating}
               walletConnected={walletState.connected}
               onConnect={connectWallet}

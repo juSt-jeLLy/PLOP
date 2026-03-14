@@ -45,7 +45,6 @@ export interface TradeHistory {
 
 export interface SessionIdentity {
   ensSubname: string
-  derivedAddress: string
   status: 'ACTIVE' | 'ROTATING' | 'INACTIVE'
   sessionNonce: number
   depositAddress?: string | null
