@@ -4,7 +4,7 @@ import GradientButton from '@/components/ui/GradientButton'
 import TokenPairSelect from '@/components/ui/TokenPairSelect'
 import MonoLabel from '@/components/ui/MonoLabel'
 import { TokenPair, OrderType } from '@/types'
-import { getDefaultPairs } from '@/lib/tokens'
+import { getDefaultPairs, getDemoPrice, parseTokenPair } from '@/lib/tokens'
 
 interface NewOrderFormProps {
   onSubmit: (data: { type: OrderType; pair: TokenPair; amount: number; price: number; ttlSeconds: number }) => void
@@ -25,19 +25,20 @@ const NewOrderForm: React.FC<NewOrderFormProps> = ({ onSubmit, isSubmitting, wal
   const [orderType, setOrderType] = useState<OrderType>('BUY')
   const [pair, setPair] = useState<TokenPair>((defaultPairs[0] || 'ETH/ETH') as TokenPair)
   const [amount, setAmount] = useState('')
-  const [price, setPrice] = useState('')
   const [ttl, setTtl] = useState(300)
   const [showSuccess, setShowSuccess] = useState(false)
+  const demoPrice = getDemoPrice(pair)
+  const { base, quote } = parseTokenPair(pair)
+  const canSubmit = Boolean(amount) && Number.isFinite(demoPrice) && demoPrice! > 0
 
   const handleSubmit = () => {
-    if (!amount || !price) return
-    onSubmit({ type: orderType, pair, amount: parseFloat(amount), price: parseFloat(price), ttlSeconds: ttl })
+    if (!amount || !canSubmit) return
+    onSubmit({ type: orderType, pair, amount: parseFloat(amount), price: demoPrice as number, ttlSeconds: ttl })
     setTimeout(() => {
       setShowSuccess(true)
       setTimeout(() => {
         setShowSuccess(false)
         setAmount('')
-        setPrice('')
       }, 1200)
     }, 1300)
   }
@@ -87,18 +88,6 @@ const NewOrderForm: React.FC<NewOrderFormProps> = ({ onSubmit, isSubmitting, wal
         </div>
 
         <div>
-          <MonoLabel>Price (USD)</MonoLabel>
-          <input
-            type="number"
-            value={price}
-            onChange={e => setPrice(e.target.value)}
-            placeholder="0.00"
-            disabled={!walletConnected}
-            className={`mt-1.5 w-full bg-secondary border border-border rounded-lg px-3 py-2.5 font-mono text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary/50 ${!walletConnected ? 'opacity-60 cursor-not-allowed' : ''}`}
-          />
-        </div>
-
-        <div>
           <MonoLabel>TTL</MonoLabel>
           <div className="flex gap-2 mt-1.5">
             {ttlOptions.map(opt => (
@@ -126,7 +115,7 @@ const NewOrderForm: React.FC<NewOrderFormProps> = ({ onSubmit, isSubmitting, wal
           fullWidth
           onClick={walletConnected ? handleSubmit : onConnect}
           loading={isSubmitting}
-          disabled={!walletConnected || !amount || !price}
+          disabled={!walletConnected || !canSubmit}
         >
           {walletConnected ? (showSuccess ? '✓ Order Live' : '→ Encrypt & Submit Order') : 'Connect Wallet'}
         </GradientButton>

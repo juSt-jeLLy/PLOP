@@ -1,9 +1,12 @@
 type TokenDecimalsMap = Record<string, number>
 type TokenAddressMap = Record<string, string>
+type DemoPriceMap = Record<string, number>
 
 let cachedPairs: string[] | null = null
 let cachedDecimals: TokenDecimalsMap | null = null
 let cachedAddresses: TokenAddressMap | null = null
+let cachedDemoPrices: DemoPriceMap | null = null
+let cachedDemoDefault: number | null = null
 
 function normalizeToken(symbol: string): string {
   return symbol.trim().toUpperCase()
@@ -72,9 +75,56 @@ export function getTokenAddress(symbol: string): string | null {
   return getTokenAddressMap()[normalized] || null
 }
 
+function getDemoPriceMap(): DemoPriceMap {
+  if (cachedDemoPrices) return cachedDemoPrices
+  const raw = (import.meta.env.VITE_DEMO_PRICE_MAP as string | undefined) || ''
+  if (!raw) {
+    cachedDemoPrices = {}
+    return cachedDemoPrices
+  }
+  try {
+    const parsed = JSON.parse(raw) as Record<string, number | string>
+    cachedDemoPrices = Object.entries(parsed).reduce<DemoPriceMap>((acc, [key, value]) => {
+      const num = typeof value === 'string' ? Number(value) : value
+      if (Number.isFinite(num) && num > 0) {
+        acc[key.trim().toUpperCase()] = num
+      }
+      return acc
+    }, {})
+  } catch {
+    cachedDemoPrices = {}
+  }
+  return cachedDemoPrices
+}
+
+function getDemoDefault(): number | null {
+  if (cachedDemoDefault !== null) return cachedDemoDefault
+  const raw = (import.meta.env.VITE_DEMO_PRICE_DEFAULT as string | undefined) || ''
+  if (!raw) {
+    cachedDemoDefault = null
+    return cachedDemoDefault
+  }
+  const num = Number(raw)
+  cachedDemoDefault = Number.isFinite(num) && num > 0 ? num : null
+  return cachedDemoDefault
+}
+
 export function parseTokenPair(pair: string): { base: string; quote: string } {
   const [baseRaw, quoteRaw] = pair.split('/')
   const base = (baseRaw || pair).trim()
   const quote = (quoteRaw || base).trim()
   return { base, quote }
+}
+
+export function getDemoPrice(pair: string): number | null {
+  const map = getDemoPriceMap()
+  const { base, quote } = parseTokenPair(pair)
+  const forwardKey = `${normalizeToken(base)}/${normalizeToken(quote)}`
+  const inverseKey = `${normalizeToken(quote)}/${normalizeToken(base)}`
+  if (Number.isFinite(map[forwardKey])) return map[forwardKey]
+  if (Number.isFinite(map[inverseKey]) && map[inverseKey] > 0) {
+    return 1 / map[inverseKey]
+  }
+  const fallback = getDemoDefault()
+  return Number.isFinite(fallback) ? fallback : null
 }
