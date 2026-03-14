@@ -40,6 +40,7 @@ export interface StoredOrder {
   originalAmount: string;
   remainingAmount: string;
   filledAmount: string;
+  lastFillAmount?: string;
   parentDdocId?: string | null;
   submittedAt: number;
   ttlSeconds: number;

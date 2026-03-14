@@ -251,7 +251,7 @@ async function checkPendingDeposits(): Promise<void> {
               continue;
             }
             try {
-              const txHash = await refundDeposit(refundAddress, required.toString(), payload.tokenIn);
+              const txHash = await refundDeposit(refundAddress, required.toString(), payload.tokenIn, doc.ddocId);
               await markRefunded(doc.ddocId, parsed, txHash);
               console.log('[Hoodi] Refund sent for cancelled order:', doc.ddocId);
             } catch (err) {

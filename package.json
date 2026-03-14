@@ -16,6 +16,7 @@
     "compile:resolver": "node scripts/compileResolver.mjs",
     "setup:bitgo": "node scripts/setupBitgo.mjs",
     "engine": "tsx engine/index.ts",
+    "approver": "tsx engine/approver.ts",
     "verify": "node scripts/verify.mjs",
     "generate:engine-keys": "node scripts/generateEngineKeys.mjs"
   },

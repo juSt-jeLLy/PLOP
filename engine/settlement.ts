@@ -28,6 +28,24 @@ function resolveTokenName(token: string): string {
   return normalized;
 }
 
+type TransferContext = {
+  sequenceId?: string;
+  comment?: string;
+};
+
+function buildMatchSequenceId(orderAId: string, orderBId: string, leg?: 'A' | 'B'): string {
+  return `plop:match:${orderAId}:${orderBId}${leg ? `:${leg}` : ''}`;
+}
+
+function buildRefundSequenceId(orderId: string): string {
+  return `plop:refund:${orderId}`;
+}
+
+function buildComment(sequenceId?: string): string | undefined {
+  if (!sequenceId) return undefined;
+  return `plop ${sequenceId}`;
+}
+
 export class PartialSettlementError extends Error {
   txHash: string;
 
@@ -146,7 +164,8 @@ async function updateWhitelistRuleViaApi(ruleId: string, addresses: string[]): P
 async function sendEthMany(
   addressA: string,
   addressB: string,
-  amountWei: string
+  amountWei: string,
+  context?: TransferContext
 ): Promise<string[]> {
   const walletPassphrase = requireEnv('BITGO_WALLET_PASSPHRASE');
   const wallet = await getWalletInstance();
@@ -173,6 +192,8 @@ async function sendEthMany(
     ],
     walletPassphrase,
     type: 'transfer',
+    sequenceId: context?.sequenceId,
+    comment: context?.comment,
   });
 
   const txHash = result?.txid || result?.hash || result?.id;
@@ -180,7 +201,11 @@ async function sendEthMany(
   return [String(txHash)];
 }
 
-async function sendEthSingle(address: string, amountWei: string): Promise<string> {
+async function sendEthSingle(
+  address: string,
+  amountWei: string,
+  context?: TransferContext
+): Promise<string> {
   const walletPassphrase = requireEnv('BITGO_WALLET_PASSPHRASE');
   const wallet = await getWalletInstance();
   await wallet.refresh();
@@ -190,6 +215,8 @@ async function sendEthSingle(address: string, amountWei: string): Promise<string
     amount: amountWei,
     walletPassphrase,
     type: 'transfer',
+    sequenceId: context?.sequenceId,
+    comment: context?.comment,
   });
   const txHash = result?.txid || result?.hash || result?.id;
   if (!txHash) throw new Error('[BitGo] Missing tx hash from send');
@@ -199,7 +226,8 @@ async function sendEthSingle(address: string, amountWei: string): Promise<string
 async function sendToken(
   address: string,
   amount: string,
-  tokenName: string
+  tokenName: string,
+  context?: TransferContext
 ): Promise<string> {
   const walletPassphrase = requireEnv('BITGO_WALLET_PASSPHRASE');
   const wallet = await getWalletInstance();
@@ -211,6 +239,8 @@ async function sendToken(
     walletPassphrase,
     tokenName,
     type: 'transfer',
+    sequenceId: context?.sequenceId,
+    comment: context?.comment,
   });
   const txHash = result?.txid || result?.hash || result?.id;
   if (!txHash) throw new Error('[BitGo] Missing tx hash from token send');
@@ -220,10 +250,15 @@ async function sendToken(
 export async function settleEthOnly(
   addressA: string,
   addressB: string,
-  amountWei: string
+  amountWei: string,
+  context?: { orderAId: string; orderBId: string }
 ): Promise<SettlementResult> {
   await whitelistBothAddresses(addressA, addressB);
-  const txHashes = await sendEthMany(addressA, addressB, amountWei);
+  const sequenceId = context ? buildMatchSequenceId(context.orderAId, context.orderBId) : undefined;
+  const txHashes = await sendEthMany(addressA, addressB, amountWei, {
+    sequenceId,
+    comment: buildComment(sequenceId),
+  });
   return { txHashes };
 }
 
@@ -236,19 +271,28 @@ export async function settleTokenPair(
   tokenOut: string,
   addressA: string,
   addressB: string,
-  amountWei: string
+  amountWei: string,
+  context?: { orderAId: string; orderBId: string }
 ): Promise<SettlementResult> {
   await whitelistBothAddresses(addressA, addressB);
 
   const tokenInName = resolveTokenName(tokenIn);
   const tokenOutName = resolveTokenName(tokenOut);
   let txHash1: string;
+  const sequenceA = context ? buildMatchSequenceId(context.orderAId, context.orderBId, 'A') : undefined;
+  const sequenceB = context ? buildMatchSequenceId(context.orderAId, context.orderBId, 'B') : undefined;
 
   try {
     if (normalizeToken(tokenOut) === 'eth') {
-      txHash1 = await sendEthSingle(addressA, amountWei);
+      txHash1 = await sendEthSingle(addressA, amountWei, {
+        sequenceId: sequenceA,
+        comment: buildComment(sequenceA),
+      });
     } else {
-      txHash1 = await sendToken(addressA, amountWei, tokenOutName);
+      txHash1 = await sendToken(addressA, amountWei, tokenOutName, {
+        sequenceId: sequenceA,
+        comment: buildComment(sequenceA),
+      });
     }
   } catch (err) {
     console.error('[Settlement] FATAL — ERC-20 send #1 failed:', err);
@@ -258,9 +302,15 @@ export async function settleTokenPair(
   try {
     let txHash2: string;
     if (normalizeToken(tokenIn) === 'eth') {
-      txHash2 = await sendEthSingle(addressB, amountWei);
+      txHash2 = await sendEthSingle(addressB, amountWei, {
+        sequenceId: sequenceB,
+        comment: buildComment(sequenceB),
+      });
     } else {
-      txHash2 = await sendToken(addressB, amountWei, tokenInName);
+      txHash2 = await sendToken(addressB, amountWei, tokenInName, {
+        sequenceId: sequenceB,
+        comment: buildComment(sequenceB),
+      });
     }
     return { txHashes: [txHash1, txHash2] };
   } catch (err) {
@@ -281,16 +331,25 @@ export async function settleTokenPair(
 export async function refundDeposit(
   refundAddress: string,
   amountWei: string,
-  tokenIn: string
+  tokenIn: string,
+  orderId?: string
 ): Promise<string> {
   await whitelistBothAddresses(refundAddress, refundAddress);
 
   if (normalizeToken(tokenIn) === 'eth') {
-    return sendEthSingle(refundAddress, amountWei);
+    const sequenceId = orderId ? buildRefundSequenceId(orderId) : undefined;
+    return sendEthSingle(refundAddress, amountWei, {
+      sequenceId,
+      comment: buildComment(sequenceId),
+    });
   }
 
   const tokenName = resolveTokenName(tokenIn);
-  return sendToken(refundAddress, amountWei, tokenName);
+  const sequenceId = orderId ? buildRefundSequenceId(orderId) : undefined;
+  return sendToken(refundAddress, amountWei, tokenName, {
+    sequenceId,
+    comment: buildComment(sequenceId),
+  });
 }
 
 export async function createDepositAddress(label: string): Promise<string> {

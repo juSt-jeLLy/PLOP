@@ -459,7 +459,7 @@ app.post('/orders/:id/cancel', async (req, res) => {
       if (refundAddress && tokenIn && refundAmount) {
         if (stored.status === 'LIVE') {
           try {
-            refundTxHash = await refundDeposit(refundAddress, refundAmount, tokenIn);
+            refundTxHash = await refundDeposit(refundAddress, refundAmount, tokenIn, ddocId);
           } catch (err) {
             refundError = String(err);
           }
@@ -579,23 +579,22 @@ async function matchingCycle(): Promise<void> {
 
     await applyPartialFill(match);
 
-    const testRecipient = process.env.ENGINE_TEST_RECIPIENT;
-    const settlementAddressA = testRecipient || addressA;
-    const settlementAddressB = testRecipient || addressB;
-
-    if (testRecipient) {
-      console.log('[Engine] ENGINE_TEST_RECIPIENT override in use:', testRecipient);
-    }
-
     const amountWei = match.fillAmount.toString();
     const { txHashes } = isEthOnlyPair(match.orderA.tokenIn, match.orderA.tokenOut)
-      ? await settleEthOnly(settlementAddressA, settlementAddressB, amountWei)
+      ? await settleEthOnly(addressA, addressB, amountWei, {
+          orderAId: match.orderA.ddocId,
+          orderBId: match.orderB.ddocId,
+        })
       : await settleTokenPair(
           match.orderA.tokenIn,
           match.orderA.tokenOut,
-          settlementAddressA,
-          settlementAddressB,
-          amountWei
+          addressA,
+          addressB,
+          amountWei,
+          {
+            orderAId: match.orderA.ddocId,
+            orderBId: match.orderB.ddocId,
+          }
         );
 
     await finalizeOrder(

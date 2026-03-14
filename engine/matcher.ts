@@ -48,7 +48,7 @@ export async function fetchLiveOrders(): Promise<DecryptedOrder[]> {
           const refundAddress = typeof payload.refundAddress === 'string' ? payload.refundAddress : null;
           const refundAmount = stored.remainingAmount || stored.originalAmount || payload.amount;
           if (!refundTxHash && refundAddress && refundAmount) {
-            refundTxHash = await refundDeposit(refundAddress, refundAmount, payload.tokenIn);
+            refundTxHash = await refundDeposit(refundAddress, refundAmount, payload.tokenIn, stored.ddocId);
           } else if (!refundAddress) {
             refundError = 'Missing refund address';
           }
@@ -146,6 +146,7 @@ export async function applyPartialFill(match: MatchResult): Promise<void> {
         remainingAmount: newRemaining,
         status: fullyFilled ? 'IN_SETTLEMENT' : 'PARTIALLY_FILLED_IN_SETTLEMENT',
         lastFillAt: Date.now(),
+        lastFillAmount: match.fillAmount.toString(),
       })
     );
 
