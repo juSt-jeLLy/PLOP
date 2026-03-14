@@ -94,7 +94,7 @@ graph TD
    - User submits order (pair, side, amount, price, TTL).
    - UI encrypts payload (tweetnacl) with engine public key.
    - UI posts `/orders` to engine.
-   - Engine stores encrypted order as Fileverse ddoc (deposit address is embedded in the encrypted payload, not in ENS).
+   - Engine stores encrypted order as a Fileverse ddoc (no plaintext order data; deposit address is embedded in the encrypted payload, not in ENS).
 
 4. Deposit to BitGo (Hoodi)
    - UI prompts deposit of the **token-in** amount to the BitGo address.
@@ -216,6 +216,7 @@ Critical gotchas from the build docs: settlement recipients are required (no ENS
 - Deposit addresses are returned via the engine API and embedded in encrypted orders, not published in ENS.
 - Deposits and settlement happen on Hoodi; ENS stays on Sepolia.
 - BitGo creates unique deposit addresses per session/order, reducing linkability. Settlement still comes from the same MPC wallet, so privacy is improved but not absolute.
+- Fileverse stores only ciphertext (order payloads + receipts); decryption happens inside the engine at match/settlement time.
 
 ## Smart contracts
 
@@ -245,7 +246,7 @@ Critical gotchas from the build docs: settlement recipients are required (no ENS
 - Deposit modal prompts MetaMask to send funds to BitGo deposit address.
 - Orders tab:
   - Active orders show live states.
-  - History includes matched, partial, cancelled, expired, and refund status.
+  - History includes matched, partial, cancelled, expired, and refund status **across prior session subnames** stored locally for the connected wallet.
 - Pool activity uses `/orders/all` (global, not only local session).
 
 ## Refund logic (cancelled and expired)

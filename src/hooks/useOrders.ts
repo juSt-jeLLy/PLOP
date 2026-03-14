@@ -173,6 +173,31 @@ function buildTradeHistory(orders: EngineOrder[]): TradeHistory[] {
     .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime())
 }
 
+function getHistoryStorageKey(walletAddress: string) {
+  return `plop.sessionHistory.${walletAddress.toLowerCase()}`
+}
+
+function loadHistorySubnames(walletAddress: string): string[] {
+  if (typeof window === 'undefined') return []
+  try {
+    const raw = window.localStorage.getItem(getHistoryStorageKey(walletAddress))
+    if (!raw) return []
+    const parsed = JSON.parse(raw) as string[]
+    return Array.isArray(parsed) ? parsed.filter((s) => typeof s === 'string') : []
+  } catch {
+    return []
+  }
+}
+
+function storeHistorySubnames(walletAddress: string, subnames: string[]) {
+  if (typeof window === 'undefined') return
+  try {
+    window.localStorage.setItem(getHistoryStorageKey(walletAddress), JSON.stringify(subnames))
+  } catch {
+    // ignore storage failures
+  }
+}
+
 export function useOrders(options: UseOrdersOptions = {}) {
   const {
     sessionSubname,
@@ -183,11 +208,30 @@ export function useOrders(options: UseOrdersOptions = {}) {
   } = options
   const [activeOrders, setActiveOrders] = useState<Order[]>([])
   const [tradeHistory, setTradeHistory] = useState<TradeHistory[]>([])
+  const [historySubnames, setHistorySubnames] = useState<string[]>([])
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [lastSubmitTime, setLastSubmitTime] = useState<number | null>(null)
   const [depositRequest, setDepositRequest] = useState<DepositRequest | null>(null)
   const fetchInFlight = useRef(false)
   const lastPromptedOrderId = useRef<string | null>(null)
+
+  useEffect(() => {
+    if (!walletAddress) {
+      setHistorySubnames([])
+      return
+    }
+    setHistorySubnames(loadHistorySubnames(walletAddress))
+  }, [walletAddress])
+
+  useEffect(() => {
+    if (!walletAddress || !sessionSubname || sessionSubname === '—') return
+    setHistorySubnames((prev) => {
+      const next = [sessionSubname, ...prev.filter((s) => s !== sessionSubname)]
+      const trimmed = next.slice(0, 20)
+      storeHistorySubnames(walletAddress, trimmed)
+      return trimmed
+    })
+  }, [walletAddress, sessionSubname])
 
   const fetchOrders = useCallback(async () => {
     if (!walletConnected || !sessionSubname || sessionSubname === '—') {
@@ -199,24 +243,33 @@ export function useOrders(options: UseOrdersOptions = {}) {
     if (fetchInFlight.current) return
     fetchInFlight.current = true
     try {
-      const url = new URL(`${getEngineUrl()}/orders`)
-      url.searchParams.set('sessionSubname', sessionSubname)
-      const res = await fetch(url.toString(), {
-        headers: getEngineHeaders(),
-        cache: 'no-store',
-      })
-      if (!res.ok) {
-        console.warn('[Orders] Engine responded', res.status)
-        return
+      const fetchForSubname = async (subname: string): Promise<EngineOrder[]> => {
+        const url = new URL(`${getEngineUrl()}/orders`)
+        url.searchParams.set('sessionSubname', subname)
+        const res = await fetch(url.toString(), {
+          headers: getEngineHeaders(),
+          cache: 'no-store',
+        })
+        if (!res.ok) {
+          console.warn('[Orders] Engine responded', res.status)
+          return []
+        }
+        const payload = await res.json()
+        return Array.isArray(payload?.orders) ? (payload.orders as EngineOrder[]) : []
       }
-      const payload = await res.json()
-      const orders = Array.isArray(payload?.orders) ? (payload.orders as EngineOrder[]) : []
-      const mapped = orders
+
+      const currentOrders = await fetchForSubname(sessionSubname)
+      const mapped = currentOrders
         .map(mapEngineOrder)
         .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
       const active = mapped.filter((order) => ACTIVE_STATUSES.has(order.status))
       setActiveOrders(active)
-      setTradeHistory(buildTradeHistory(orders))
+      const otherSubnames = historySubnames.filter((s) => s !== sessionSubname)
+      const otherOrders = otherSubnames.length
+        ? (await Promise.all(otherSubnames.map(fetchForSubname))).flat()
+        : []
+      const combined = [...currentOrders, ...otherOrders]
+      setTradeHistory(buildTradeHistory(combined))
 
       if (depositRequest) {
         const current = active.find((order) => order.id === depositRequest.orderId)
@@ -247,7 +300,7 @@ export function useOrders(options: UseOrdersOptions = {}) {
     } finally {
       fetchInFlight.current = false
     }
-  }, [walletConnected, sessionSubname, depositRequest, sessionDepositAddress])
+  }, [walletConnected, sessionSubname, depositRequest, sessionDepositAddress, historySubnames])
 
   useEffect(() => {
     void fetchOrders()
