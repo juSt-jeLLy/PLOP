@@ -16,6 +16,19 @@ See detailed build steps in [SETUP.MD](SETUP.MD) and full design notes in [DESCR
 - Supports partial fills with residual orders.
 - Refunds cancelled or expired orders automatically.
 
+## Why this is different
+
+- ENS is used as an actual privacy primitive: session addresses rotate automatically and do not expose the trader’s wallet.
+- Orders are encrypted client-side and stored off-chain; the order book is private by default.
+- Settlement uses BitGo MPC with whitelists and velocity rules, designed for institutional controls.
+- Cross-chain by design: ENS identity on Sepolia, funds on Hoodi.
+
+## Demo highlights
+
+- Built around ENS auto-rotation (explicitly requested in ENS prize briefs).
+- End-to-end flow works today with real testnet deposits and BitGo MPC settlement.
+- Privacy is preserved without custom L2s or opaque relayers.
+
 ### Architecture diagram
 
 ```mermaid
@@ -36,13 +49,13 @@ graph TD
     BG["BitGo MPC Wallet (hteth)"]
   end
 
-  UI -->|ENS reads| ENS
-  UI -->|EIP-712 signature| SC
-  ENG -->|setText/rotate| DPR
-  SC -->|setText(plop.settlement)| DPR
-  ENG -->|create/list/update ddocs| FV
-  ENG -->|deposit watch + settlement| BG
-  ENG -->|/orders, /session| UI
+  UI -->|"ENS reads"| ENS
+  UI -->|"EIP-712 signature"| SC
+  ENG -->|"setText / rotate"| DPR
+  SC -->|"setText(plop.settlement)"| DPR
+  ENG -->|"create / list / update ddocs"| FV
+  ENG -->|"deposit watch + settlement"| BG
+  ENG -->|" /orders, /session "| UI
 ```
 
 ## Core flow (step by step)
