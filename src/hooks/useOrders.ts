@@ -26,6 +26,11 @@ type EngineOrder = {
   matchedPrice?: number
   counterpartyEns?: string
   settledAt?: number
+  refundTxHash?: string
+  refundError?: string
+  refundRequestedAt?: number
+  refundCompletedAt?: number
+  refundLastAttemptAt?: number
 }
 
 const ACTIVE_STATUSES = new Set<OrderStatus>([
@@ -34,6 +39,19 @@ const ACTIVE_STATUSES = new Set<OrderStatus>([
   'IN_SETTLEMENT',
   'PARTIALLY_FILLED_IN_SETTLEMENT',
   'PARTIALLY_FILLED',
+])
+const HISTORY_STATUSES = new Set<OrderStatus>([
+  'MATCHED',
+  'PARTIALLY_FILLED',
+  'PARTIAL_SETTLEMENT',
+  'SETTLEMENT_FAILED',
+  'EXPIRED',
+  'CANCELLED',
+])
+const SETTLED_STATUSES = new Set<OrderStatus>([
+  'MATCHED',
+  'PARTIALLY_FILLED',
+  'PARTIAL_SETTLEMENT',
 ])
 
 function getEngineUrl() {
@@ -113,7 +131,7 @@ function buildPair(order: EngineOrder): string {
 
 function buildTradeHistory(orders: EngineOrder[]): TradeHistory[] {
   return orders
-    .filter((order) => Boolean(order.settledAt))
+    .filter((order) => Boolean(order.settledAt) || HISTORY_STATUSES.has(order.status))
     .map((order) => {
       const pair =
         order.type === 'BUY'
@@ -125,18 +143,34 @@ function buildTradeHistory(orders: EngineOrder[]): TradeHistory[] {
         order.type === 'BUY' && Number.isFinite(price) && price > 0
           ? amountIn / price
           : amountIn
+      const settledAt = order.settledAt ? new Date(order.settledAt) : undefined
+      const refundRequestedAt = order.refundRequestedAt ? new Date(order.refundRequestedAt) : undefined
+      const refundCompletedAt = order.refundCompletedAt ? new Date(order.refundCompletedAt) : undefined
+      const updatedAt =
+        settledAt
+        ?? refundCompletedAt
+        ?? refundRequestedAt
+        ?? new Date(order.submittedAt)
       return {
         id: order.ddocId,
         type: order.type,
         pair,
         amount: Number.isFinite(baseAmount) ? baseAmount : amountIn,
-        matchedPrice: Number.isFinite(order.matchedPrice) ? order.matchedPrice : price,
-        counterpartyEns: order.counterpartyEns || '—',
-        settlementTxHash: order.settlementTxHash || '—',
-        settledAt: new Date(order.settledAt || Date.now()),
+        status: order.status,
+        matchedPrice: SETTLED_STATUSES.has(order.status)
+          ? (Number.isFinite(order.matchedPrice) ? order.matchedPrice : price)
+          : undefined,
+        counterpartyEns: order.counterpartyEns || undefined,
+        settlementTxHash: order.settlementTxHash || undefined,
+        settledAt,
+        refundTxHash: order.refundTxHash,
+        refundRequestedAt,
+        refundCompletedAt,
+        refundError: order.refundError,
+        updatedAt,
       }
     })
-    .sort((a, b) => b.settledAt.getTime() - a.settledAt.getTime())
+    .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime())
 }
 
 export function useOrders(options: UseOrdersOptions = {}) {

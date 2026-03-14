@@ -31,10 +31,16 @@ export interface TradeHistory {
   type: OrderType
   pair: TokenPair
   amount: number
-  matchedPrice: number
-  counterpartyEns: string
-  settlementTxHash: string
-  settledAt: Date
+  status: OrderStatus
+  matchedPrice?: number
+  counterpartyEns?: string
+  settlementTxHash?: string
+  settledAt?: Date
+  refundTxHash?: string
+  refundRequestedAt?: Date
+  refundCompletedAt?: Date
+  refundError?: string
+  updatedAt: Date
 }
 
 export interface SessionIdentity {

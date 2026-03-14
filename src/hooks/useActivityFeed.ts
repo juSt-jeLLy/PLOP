@@ -60,6 +60,9 @@ export function useActivityFeed(orders: Order[], history: TradeHistory[]) {
     })
 
     history.forEach((trade) => {
+      if (trade.status !== 'MATCHED' && trade.status !== 'PARTIALLY_FILLED' && trade.status !== 'PARTIAL_SETTLEMENT') {
+        return
+      }
       if (seenTradesRef.current.has(trade.id)) return
       seenTradesRef.current.add(trade.id)
       nextEvents.push({

@@ -246,6 +246,11 @@ async function listOrdersForSession(
           counterpartyEns: stored.counterpartyEns,
           settledAt: stored.settledAt,
           parentDdocId: stored.parentDdocId,
+          refundTxHash: stored.refundTxHash,
+          refundError: stored.refundError,
+          refundRequestedAt: stored.refundRequestedAt,
+          refundCompletedAt: stored.refundCompletedAt,
+          refundLastAttemptAt: stored.refundLastAttemptAt,
         });
       } catch (err) {
         console.warn(`[Engine] Failed to decrypt order ${stored.ddocId}; skipping`, err);
@@ -296,6 +301,11 @@ async function listAllOrders(statusFilter?: string[]): Promise<Array<Record<stri
           counterpartyEns: stored.counterpartyEns,
           settledAt: stored.settledAt,
           parentDdocId: stored.parentDdocId,
+          refundTxHash: stored.refundTxHash,
+          refundError: stored.refundError,
+          refundRequestedAt: stored.refundRequestedAt,
+          refundCompletedAt: stored.refundCompletedAt,
+          refundLastAttemptAt: stored.refundLastAttemptAt,
         });
       } catch (err) {
         console.warn(`[Engine] Failed to decrypt order ${stored.ddocId}; skipping`, err);

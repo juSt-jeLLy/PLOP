@@ -18,6 +18,11 @@ type EngineOrder = {
   matchedPrice?: number
   counterpartyEns?: string
   settledAt?: number
+  refundTxHash?: string
+  refundError?: string
+  refundRequestedAt?: number
+  refundCompletedAt?: number
+  refundLastAttemptAt?: number
 }
 
 function getEngineUrl() {
@@ -86,18 +91,22 @@ function buildTradeHistory(orders: EngineOrder[]): TradeHistory[] {
         order.type === 'BUY' && Number.isFinite(price) && price > 0
           ? amountIn / price
           : amountIn
+      const settledAt = order.settledAt ? new Date(order.settledAt) : undefined
+      const updatedAt = settledAt ?? new Date(order.submittedAt)
       return {
         id: order.ddocId,
         type: order.type,
         pair,
         amount: Number.isFinite(baseAmount) ? baseAmount : amountIn,
+        status: order.status,
         matchedPrice: Number.isFinite(order.matchedPrice) ? order.matchedPrice : price,
-        counterpartyEns: order.counterpartyEns || '—',
-        settlementTxHash: order.settlementTxHash || '—',
-        settledAt: new Date(order.settledAt || Date.now()),
+        counterpartyEns: order.counterpartyEns || undefined,
+        settlementTxHash: order.settlementTxHash || undefined,
+        settledAt,
+        updatedAt,
       }
     })
-    .sort((a, b) => b.settledAt.getTime() - a.settledAt.getTime())
+    .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime())
 }
 
 function formatOrderLabel(order: Order) {
