@@ -179,6 +179,12 @@ Enable Developer Mode at `ddocs.new`, create an API key, deploy a Fileverse serv
 
 5. BitGo MPC wallet + policies  
 Create MPC keys and a hot wallet using `wallets().add()` (not `generateWallet`). Use coin `hteth` and import `Hteth` for sends. Create a destination whitelist policy and a velocity limit policy, and register a transfer webhook to `/webhooks/bitgo`. At match time the engine **updates** the whitelist via `updatePolicyRule` (never creates new rules).
+  
+  **Policy + approval behavior**
+  - **Whitelist policy**: settlement and refund recipients are added dynamically before sending.
+  - **Velocity policy**: caps total outflow; this protects the pool wallet from draining.
+  - **Pending approvals**: BitGo can require approvals for transfers; PLOP uses an **optional approver daemon** that validates each approval against the encrypted order payload.
+  - If the approver is offline, approvals remain pending and can be approved manually in BitGo.
 
 6. Session creation  
 When a wallet connects, the frontend calls `POST /session`. The engine generates a **random subname** (e.g., `a1b2c3.plop.eth`), creates a BitGo deposit address, and writes ENS text records `plop.active=true`, `plop.pairs`, and `plop.receipts`. The deposit address is **returned via the API only** (cached locally and embedded in encrypted orders), not published in ENS. The frontend stores the `ensSubname` and reuses it until the session is marked inactive.
