@@ -4,6 +4,10 @@ Privacy-first OTC liquidity with rotating ENS identities and MPC settlement.
 
 PLOP is a privacy-preserving OTC dark pool that combines ENS session identities on Sepolia, encrypted off-chain order storage on Fileverse, and BitGo MPC settlement on Hoodi. Orders are hidden until matched, deposits are confirmed via BitGo, and settlement happens on-chain with policy controls.
 
+Contracts (Sepolia):
+- DarkPoolResolver.sol: [0x60029f58b742590ebe43a708d15af68289986682](https://sepolia.etherscan.io/address/0x60029f58b742590ebe43a708d15af68289986682)
+- SettlementController.sol: [0x39b6356a7cd96bd203174617e41b9535212d06fb](https://sepolia.etherscan.io/address/0x39b6356a7cd96bd203174617e41b9535212d06fb)
+
 This README is the canonical, end-to-end overview: what it does, how the flow works, and how the system is structured.
 
 See detailed build steps in [SETUP.MD](SETUP.MD) and full design notes in [DESCRIPTION.md](DESCRIPTION.md).
@@ -142,6 +146,51 @@ sequenceDiagram
   ENG->>ENS: rotate address
   ENG->>FV: write receipts
 ```
+
+## Technical walkthrough (from SETUP.MD, FLOW.md, RULES.md)
+
+This section condenses the full build + runtime behavior documented in `SETUP.MD`, `FLOW.md`, and `RULES.md`.
+
+1. Accounts and chain setup  
+Create ENS testnet account (Sepolia), BitGo testnet account (Hoodi / hteth), and Fileverse account. Hoodi is the settlement chain (chain ID 560048) and Sepolia is the ENS identity chain (11155111). BitGo whitelist policies have a 48‑hour lock after creation; this is expected for production even if it is inactive during demos.
+
+2. Deploy ENS resolver (DarkPoolResolver.sol)  
+Compile and deploy the resolver to Sepolia. It implements ENSIP‑10 wildcard resolution (`resolve`) plus `addr` and `text`, derives a rotating address from `keccak256(node, nonce, epoch)`, and rotates via `rotateAddress`. After deploy, set `plop.eth` resolver to this contract in the ENS UI. The engine is the only address allowed to call `rotateAddress` and `setText`.
+
+3. Deploy settlement controller (SettlementController.sol)  
+Deploy to Sepolia and link it inside the resolver using `setSettlementController`. This contract verifies EIP‑712 signatures (`PlopSettlementController`, version `1`, chainId 11155111) and writes encrypted settlement payloads into `plop.settlement` via the resolver. The payload is encrypted client‑side with the engine public key.
+
+4. Fileverse REST setup  
+Enable Developer Mode at `ddocs.new`, create an API key, deploy a Fileverse server, and store `FILEVERSE_SERVER_URL` + `FILEVERSE_API_KEY`. Fileverse is REST‑only; use `createDoc`, `getDoc`, `updateDoc`, and `listDocs` with pagination. Always `waitForSync()` after create/update before using the link. The search API returns `nodes` (not `ddocs`). The API key is passed as a query param.
+
+5. BitGo MPC wallet + policies  
+Create MPC keys and a hot wallet using `wallets().add()` (not `generateWallet`). Use coin `hteth` and import `Hteth` for sends. Create a destination whitelist policy and a velocity limit policy, and register a transfer webhook to `/webhooks/bitgo`. At match time the engine **updates** the whitelist via `updatePolicyRule` (never creates new rules).
+
+6. Session creation  
+When a wallet connects, the frontend derives a subname (e.g., `abcde.plop.eth`) and calls `POST /session`. The engine creates a BitGo deposit address and writes ENS text records `plop.deposit` and `plop.active=true`. The deposit address is cached in local storage for UI refreshes.
+
+7. Settlement authorization  
+The frontend encrypts a settlement payload (recipient, chainId, expiry, nonce) with `ENGINE_PUBLIC_KEY`, signs an EIP‑712 message, and posts to `POST /session/settlement`. The engine verifies the signature through `SettlementController` and writes the ciphertext to `plop.settlement`.
+
+8. Order submission  
+Orders are encrypted client‑side with NaCl box and posted to `POST /orders`. The engine stores the encrypted order as a Fileverse ddoc with `PENDING_DEPOSIT`, plus `originalAmount`, `remainingAmount`, `filledAmount`, `submittedAt`, and `ttlSeconds`.
+
+9. Deposits and activation  
+BitGo webhooks mark orders LIVE on confirmed deposits. A Hoodi deposit watcher is also available for local testing or when webhooks are unreachable. ERC‑20 deposits use the token balance watcher.
+
+10. Matching and partial fills  
+The engine polls Fileverse with `listDocs()` pagination, decrypts LIVE orders, checks TTL based on **root** `submittedAt`, and matches inverse pairs with price overlap. Partial fills update the root order to `PARTIALLY_FILLED_IN_SETTLEMENT` and create a residual ddoc that reuses the same encrypted order and original `submittedAt`.
+
+11. Settlement execution  
+The engine resolves ENS addresses via `getEnsAddress`, updates the whitelist, and settles with BitGo. ETH pairs use `sendMany()` (atomic). ERC‑20 pairs use two sequential `send()` calls (non‑atomic). Failed sends are not retried to avoid double‑spend risk.
+
+12. Rotation + receipts  
+After settlement confirmation, the engine rotates ENS addresses for fully‑filled orders only and marks `plop.active=false`. Encrypted receipts are written to Fileverse and appended to `plop.receipts` in ENS.
+
+13. Refunds  
+Cancelled or expired orders are refunded via BitGo. If a deposit arrives after cancellation/expiry, the refund watcher sends it back automatically. Refund metadata (`refundTxHash`, timestamps, error) is persisted and shown in history.
+
+Critical gotchas from the build docs: use `getEnsAddress()` for wildcard ENS resolution; never use `@fileverse/agents`; `sendMany()` is native ETH only; always update (not create) the whitelist rule; never rotate a partially‑filled session; and never retry failed ERC‑20 sends.
 
 ## Privacy model
 
