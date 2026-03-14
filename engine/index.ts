@@ -99,29 +99,39 @@ app.post('/session', async (req, res) => {
         orderId: typeof settlement?.orderId === 'string' ? settlement.orderId : undefined,
       });
       settlementBlob = encodeSettlementInstruction(settlementInstruction);
-    } else if (
-      settlementPayload &&
-      settlementSignature &&
-      settlementNonce &&
-      typeof settlementExpiry === 'number'
-    ) {
-      await recordSettlementInstruction({
-        ensSubname: subname,
-        payload: settlementPayload,
-        signature: settlementSignature,
-        nonce: settlementNonce,
-        expiry: settlementExpiry,
-      });
     }
 
-    await setSessionMetadata(subname, {
-      'plop.active': 'true',
-      'plop.pairs': pairs.join(','),
-      'plop.receipts': '',
-      ...(settlementBlob ? { 'plop.settlement': settlementBlob } : {}),
-    });
-
     res.status(200).json({ subname, depositAddress });
+
+    // fire-and-forget ENS/controller writes so /session returns quickly
+    void (async () => {
+      try {
+        if (
+          hasController &&
+          settlementPayload &&
+          settlementSignature &&
+          settlementNonce &&
+          typeof settlementExpiry === 'number'
+        ) {
+          await recordSettlementInstruction({
+            ensSubname: subname,
+            payload: settlementPayload,
+            signature: settlementSignature,
+            nonce: settlementNonce,
+            expiry: settlementExpiry,
+          });
+        }
+
+        await setSessionMetadata(subname, {
+          'plop.active': 'true',
+          'plop.pairs': pairs.join(','),
+          'plop.receipts': '',
+          ...(settlementBlob ? { 'plop.settlement': settlementBlob } : {}),
+        });
+      } catch (err) {
+        console.error('[Engine] /session background ENS write failed', err);
+      }
+    })();
   } catch (err) {
     console.error('[Engine] /session failed', err);
     res.status(500).json({ error: String(err) });
