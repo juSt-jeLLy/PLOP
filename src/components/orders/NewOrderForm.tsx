@@ -4,10 +4,13 @@ import GradientButton from '@/components/ui/GradientButton'
 import TokenPairSelect from '@/components/ui/TokenPairSelect'
 import MonoLabel from '@/components/ui/MonoLabel'
 import { TokenPair, OrderType } from '@/types'
+import { getDefaultPairs } from '@/lib/tokens'
 
 interface NewOrderFormProps {
   onSubmit: (data: { type: OrderType; pair: TokenPair; amount: number; price: number; ttlSeconds: number }) => void
   isSubmitting: boolean
+  walletConnected?: boolean
+  onConnect?: () => void
 }
 
 const ttlOptions = [
@@ -16,9 +19,11 @@ const ttlOptions = [
   { label: '1hour', value: 3600 },
 ]
 
-const NewOrderForm: React.FC<NewOrderFormProps> = ({ onSubmit, isSubmitting }) => {
+const defaultPairs = getDefaultPairs()
+
+const NewOrderForm: React.FC<NewOrderFormProps> = ({ onSubmit, isSubmitting, walletConnected = true, onConnect }) => {
   const [orderType, setOrderType] = useState<OrderType>('BUY')
-  const [pair, setPair] = useState<TokenPair>('ETH/USDC')
+  const [pair, setPair] = useState<TokenPair>((defaultPairs[0] || 'ETH/ETH') as TokenPair)
   const [amount, setAmount] = useState('')
   const [price, setPrice] = useState('')
   const [ttl, setTtl] = useState(300)
@@ -44,17 +49,19 @@ const NewOrderForm: React.FC<NewOrderFormProps> = ({ onSubmit, isSubmitting }) =
         <div className="flex gap-1 p-1 rounded-lg bg-secondary/50">
           <button
             onClick={() => setOrderType('BUY')}
+            disabled={!walletConnected}
             className={`flex-1 py-2 rounded-md text-sm font-mono transition-all ${
               orderType === 'BUY' ? 'bg-accent-green/20 text-accent-green border border-accent-green/30' : 'text-muted-foreground'
-            }`}
+            } ${!walletConnected ? 'opacity-60 cursor-not-allowed' : ''}`}
           >
             BUY
           </button>
           <button
             onClick={() => setOrderType('SELL')}
+            disabled={!walletConnected}
             className={`flex-1 py-2 rounded-md text-sm font-mono transition-all ${
               orderType === 'SELL' ? 'bg-accent-red/20 text-accent-red border border-accent-red/30' : 'text-muted-foreground'
-            }`}
+            } ${!walletConnected ? 'opacity-60 cursor-not-allowed' : ''}`}
           >
             SELL
           </button>
@@ -63,7 +70,7 @@ const NewOrderForm: React.FC<NewOrderFormProps> = ({ onSubmit, isSubmitting }) =
         <div>
           <MonoLabel>Token Pair</MonoLabel>
           <div className="mt-1.5">
-            <TokenPairSelect value={pair} onChange={setPair} />
+            <TokenPairSelect value={pair} onChange={setPair} disabled={!walletConnected} />
           </div>
         </div>
 
@@ -74,7 +81,8 @@ const NewOrderForm: React.FC<NewOrderFormProps> = ({ onSubmit, isSubmitting }) =
             value={amount}
             onChange={e => setAmount(e.target.value)}
             placeholder="0.00"
-            className="mt-1.5 w-full bg-secondary border border-border rounded-lg px-3 py-2.5 font-mono text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary/50"
+            disabled={!walletConnected}
+            className={`mt-1.5 w-full bg-secondary border border-border rounded-lg px-3 py-2.5 font-mono text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary/50 ${!walletConnected ? 'opacity-60 cursor-not-allowed' : ''}`}
           />
         </div>
 
@@ -85,7 +93,8 @@ const NewOrderForm: React.FC<NewOrderFormProps> = ({ onSubmit, isSubmitting }) =
             value={price}
             onChange={e => setPrice(e.target.value)}
             placeholder="0.00"
-            className="mt-1.5 w-full bg-secondary border border-border rounded-lg px-3 py-2.5 font-mono text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary/50"
+            disabled={!walletConnected}
+            className={`mt-1.5 w-full bg-secondary border border-border rounded-lg px-3 py-2.5 font-mono text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary/50 ${!walletConnected ? 'opacity-60 cursor-not-allowed' : ''}`}
           />
         </div>
 
@@ -96,9 +105,10 @@ const NewOrderForm: React.FC<NewOrderFormProps> = ({ onSubmit, isSubmitting }) =
               <button
                 key={opt.value}
                 onClick={() => setTtl(opt.value)}
+                disabled={!walletConnected}
                 className={`flex-1 py-1.5 rounded-md text-xs font-mono transition-all ${
                   ttl === opt.value ? 'bg-primary/20 text-primary border border-primary/30' : 'bg-secondary text-muted-foreground border border-border'
-                }`}
+                } ${!walletConnected ? 'opacity-60 cursor-not-allowed' : ''}`}
               >
                 {opt.label}
               </button>
@@ -112,13 +122,13 @@ const NewOrderForm: React.FC<NewOrderFormProps> = ({ onSubmit, isSubmitting }) =
         </div>
 
         <GradientButton
-          variant="primary"
+          variant={walletConnected ? 'primary' : 'secondary'}
           fullWidth
-          onClick={handleSubmit}
+          onClick={walletConnected ? handleSubmit : onConnect}
           loading={isSubmitting}
-          disabled={!amount || !price}
+          disabled={!walletConnected || !amount || !price}
         >
-          {showSuccess ? '✓ Order Live' : '→ Encrypt & Submit Order'}
+          {walletConnected ? (showSuccess ? '✓ Order Live' : '→ Encrypt & Submit Order') : 'Connect Wallet'}
         </GradientButton>
       </div>
     </GlassCard>

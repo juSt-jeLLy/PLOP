@@ -9,7 +9,8 @@ interface CollateralPanelProps {
 }
 
 const CollateralPanel: React.FC<CollateralPanelProps> = ({ collateral }) => {
-  const ratio = collateral.locked / (collateral.locked + collateral.available)
+  const total = collateral.locked + collateral.available
+  const ratio = total > 0 ? collateral.locked / total : 0
 
   return (
     <GlassCard>

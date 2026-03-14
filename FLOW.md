@@ -95,6 +95,29 @@ const resolverAddress = receipt.contractAddress;
 
 After deployment: Go to https://sepolia.app.ens.domains, find plop.eth, go to Records → Edit → set Resolver to your deployed contract address. This wires ENS to call YOUR contract for every *.plop.eth lookup.
 
+### 0.1b — Deploy SettlementController.sol (ENS)
+What you're doing: Deploying a controller contract that verifies EIP-712 signatures and writes encrypted settlement payloads into `plop.settlement` on the resolver.
+
+Why this exists: We keep settlement recipients private by storing only ciphertext on ENS. The controller ensures the encrypted payload is authorized (signed) without putting the plaintext on-chain.
+
+How to deploy:
+
+```bash
+npm run compile:resolver
+npm run deploy:settlement-controller
+```
+
+Then link it in the resolver:
+
+```bash
+# deploy:settlement-controller calls this automatically if ENGINE_PRIVATE_KEY is set
+```
+
+Ensure env:
+```
+SETTLEMENT_CONTROLLER_ADDRESS=<deployed controller>
+```
+
 ### 0.2 — Initialize Fileverse (Fileverse)
 What you're doing: Setting up your Fileverse developer account and getting the API key + server URL needed to create, read, update, and list encrypted order documents.
 
@@ -328,6 +351,48 @@ await engineWallet.writeContract({
   abi: DarkPoolResolverABI,
   functionName: 'setText',
   args: [node, 'plop.deposit', bitgoDepositAddress],
+});
+
+// Encrypt settlement instructions client-side with ENGINE_PUBLIC_KEY
+const encryptedPayload = buildEncryptedSettlementPayload({
+  recipient: traderSettlementAddress,
+  chainId: 560048,
+  expiry: Math.floor(Date.now() / 1000) + 3600,
+  nonce: randomHex32(),
+});
+
+// Sign an authorization over the ciphertext hash
+const payloadHash = keccak256(bytes(encryptedPayload));
+const signature = await wallet.signTypedData({
+  domain: {
+    name: 'PlopSettlementController',
+    version: '1',
+    chainId: 11155111,
+    verifyingContract: SETTLEMENT_CONTROLLER_ADDRESS,
+  },
+  types: {
+    SettlementAuthorization: [
+      { name: 'node', type: 'bytes32' },
+      { name: 'payloadHash', type: 'bytes32' },
+      { name: 'expiry', type: 'uint256' },
+      { name: 'nonce', type: 'bytes32' },
+    ],
+  },
+  primaryType: 'SettlementAuthorization',
+  message: {
+    node,
+    payloadHash,
+    expiry,
+    nonce,
+  },
+});
+
+// Controller verifies signature + writes ciphertext to ENS
+await settlementController.writeContract({
+  address: SETTLEMENT_CONTROLLER_ADDRESS,
+  abi: SettlementControllerABI,
+  functionName: 'recordSettlement',
+  args: [node, encryptedPayload, expiry, nonce, signature],
 });
 
 await engineWallet.writeContract({

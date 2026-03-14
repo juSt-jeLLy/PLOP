@@ -14,11 +14,17 @@ const ActivityFeed: React.FC<ActivityFeedProps> = ({ events }) => {
     <GlassCard>
       <MonoLabel>Pool Activity</MonoLabel>
       <div className="mt-3 max-h-[300px] overflow-y-auto flex flex-col gap-1">
-        <AnimatePresence initial={false}>
-          {events.map(event => (
-            <ActivityFeedItem key={event.id} event={event} />
-          ))}
-        </AnimatePresence>
+        {events.length === 0 ? (
+          <div className="text-xs font-mono text-muted-foreground italic">
+            No pool activity yet.
+          </div>
+        ) : (
+          <AnimatePresence initial={false}>
+            {events.map(event => (
+              <ActivityFeedItem key={event.id} event={event} />
+            ))}
+          </AnimatePresence>
+        )}
       </div>
     </GlassCard>
   )

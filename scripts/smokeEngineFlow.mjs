@@ -1,9 +1,9 @@
 import 'dotenv/config';
-import { createHmac } from 'node:crypto';
+import { createHmac, randomBytes } from 'node:crypto';
 import nacl from 'tweetnacl';
-import { createPublicClient, createWalletClient, defineChain, http, parseEther } from 'viem';
+import { createPublicClient, createWalletClient, defineChain, http, keccak256, parseEther, toBytes } from 'viem';
 import { sepolia } from 'viem/chains';
-import { normalize } from 'viem/ens';
+import { namehash, normalize } from 'viem/ens';
 import { privateKeyToAccount } from 'viem/accounts';
 
 function requireEnv(name) {
@@ -18,6 +18,10 @@ function encodeBase64(value) {
 
 function decodeBase64(value) {
   return Uint8Array.from(Buffer.from(value, 'base64'));
+}
+
+function randomHex32() {
+  return `0x${randomBytes(32).toString('hex')}`;
 }
 
 function isTruthy(value) {
@@ -91,6 +95,93 @@ async function simulateWebhookConfirm(engineUrl, depositAddress) {
   });
 }
 
+function buildEncryptedSettlementPayload(payload, enginePublicKeyB64) {
+  const enginePublicKey = decodeBase64(enginePublicKeyB64);
+  const nonce = nacl.randomBytes(nacl.box.nonceLength);
+  const ephemeral = nacl.box.keyPair();
+  const encrypted = nacl.box(
+    Buffer.from(JSON.stringify(payload), 'utf8'),
+    nonce,
+    enginePublicKey,
+    ephemeral.secretKey
+  );
+  const envelope = {
+    encryptedB64: encodeBase64(encrypted),
+    nonceB64: encodeBase64(nonce),
+    ephemeralPublicKeyB64: encodeBase64(ephemeral.publicKey),
+  };
+  return `plop:v1:${Buffer.from(JSON.stringify(envelope)).toString('base64')}`;
+}
+
+async function submitSettlementAuthorization(engineUrl, subname, enginePublicKeyB64) {
+  const controllerAddress = process.env.SETTLEMENT_CONTROLLER_ADDRESS;
+  if (!controllerAddress) return;
+
+  const signerKey =
+    process.env.SETTLEMENT_SIGNER_PRIVATE_KEY ||
+    process.env.HOODI_FUNDING_PRIVATE_KEY ||
+    process.env.ENGINE_PRIVATE_KEY ||
+    process.env.DEPLOYER_PRIVATE_KEY;
+
+  if (!signerKey) {
+    throw new Error('[Config] Missing SETTLEMENT_SIGNER_PRIVATE_KEY for settlement authorization');
+  }
+
+  const signer = privateKeyToAccount(signerKey);
+  const nonce = randomHex32();
+  const expiry = Math.floor(Date.now() / 1000) + 3600;
+  const payload = buildEncryptedSettlementPayload(
+    {
+      recipient: signer.address,
+      chainId: 560048,
+      expiry,
+      nonce,
+    },
+    enginePublicKeyB64
+  );
+
+  const payloadHash = keccak256(toBytes(payload));
+  const node = namehash(normalize(subname));
+
+  const walletClient = createWalletClient({ account: signer, chain: sepolia, transport: http(requireEnv('ETH_SEPOLIA_RPC')) });
+  const signature = await walletClient.signTypedData({
+    account: signer,
+    domain: {
+      name: 'PlopSettlementController',
+      version: '1',
+      chainId: sepolia.id,
+      verifyingContract: controllerAddress,
+    },
+    types: {
+      SettlementAuthorization: [
+        { name: 'node', type: 'bytes32' },
+        { name: 'payloadHash', type: 'bytes32' },
+        { name: 'expiry', type: 'uint256' },
+        { name: 'nonce', type: 'bytes32' },
+      ],
+    },
+    primaryType: 'SettlementAuthorization',
+    message: {
+      node,
+      payloadHash,
+      expiry: BigInt(expiry),
+      nonce,
+    },
+  });
+
+  await fetchJson(`${engineUrl}/session/settlement`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      ensSubname: subname,
+      payload,
+      expiry,
+      nonce,
+      signature,
+    }),
+  });
+}
+
 function fileverseUrl(path, params = {}) {
   const server = requireEnv('FILEVERSE_SERVER_URL').replace(/\/+$/, '');
   const apiKey = requireEnv('FILEVERSE_API_KEY');
@@ -146,17 +237,26 @@ async function main() {
   if (!subname || !depositAddress) throw new Error('[Smoke] Session response invalid');
   console.log('[Smoke] Session created:', { subname, depositAddress });
 
+  if (process.env.SETTLEMENT_CONTROLLER_ADDRESS) {
+    console.log('[Smoke] Submitting settlement authorization...');
+    await submitSettlementAuthorization(engineUrl, subname, enginePublicKeyB64);
+  }
+
   console.log('[Smoke] Verifying ENS text records...');
   const client = createPublicClient({ chain: sepolia, transport: http(requireEnv('ETH_SEPOLIA_RPC')) });
   const active = await client.getEnsText({ name: normalize(subname), key: 'plop.active' });
   const deposit = await client.getEnsText({ name: normalize(subname), key: 'plop.deposit' });
   const pairs = await client.getEnsText({ name: normalize(subname), key: 'plop.pairs' });
+  const settlement = await client.getEnsText({ name: normalize(subname), key: 'plop.settlement' });
 
   if (active !== 'true') throw new Error('[Smoke] ENS plop.active not set');
   if (deposit?.toLowerCase() !== depositAddress.toLowerCase()) {
     throw new Error('[Smoke] ENS plop.deposit mismatch');
   }
   if (pairs !== 'ETH/ETH') throw new Error('[Smoke] ENS plop.pairs mismatch');
+  if (!settlement || !settlement.startsWith('plop:v1:')) {
+    throw new Error('[Smoke] ENS plop.settlement missing or malformed');
+  }
 
   console.log('[Smoke] Creating Fileverse order (PENDING_DEPOSIT)...');
   const traderKeypair = nacl.box.keyPair();

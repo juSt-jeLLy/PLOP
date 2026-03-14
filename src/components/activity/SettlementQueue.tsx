@@ -1,10 +1,10 @@
 import React from 'react'
 import GlassCard from '@/components/ui/GlassCard'
 import MonoLabel from '@/components/ui/MonoLabel'
-import AddressDisplay from '@/components/ui/AddressDisplay'
+import type { OrderStatus, OrderType } from '@/types'
 
 interface SettlementQueueProps {
-  pendingSettlements: { fromAddress: string; toAddress: string }[]
+  pendingSettlements: { orderId: string; status: OrderStatus; side: OrderType; pair: string }[]
 }
 
 const SettlementQueue: React.FC<SettlementQueueProps> = ({ pendingSettlements }) => {
@@ -22,9 +22,9 @@ const SettlementQueue: React.FC<SettlementQueueProps> = ({ pendingSettlements })
               <div key={i} className="flex items-center gap-2 text-xs">
                 <span className="animate-spin w-3 h-3 border border-accent-cyan border-t-transparent rounded-full" />
                 <span className="text-muted-foreground font-mono">Awaiting BitGo co-sign...</span>
-                <AddressDisplay address={s.fromAddress} truncate />
-                <span className="text-muted-foreground">→</span>
-                <AddressDisplay address={s.toAddress} truncate />
+                <span className="font-mono text-foreground">{s.side}</span>
+                <span className="font-mono text-muted-foreground">{s.pair}</span>
+                <span className="font-mono text-muted-foreground">#{s.orderId.slice(0, 6)}</span>
               </div>
             ))}
           </div>

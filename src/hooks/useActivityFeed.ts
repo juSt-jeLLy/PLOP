@@ -1,25 +1,79 @@
 import { useState, useEffect, useRef } from 'react'
-import { ActivityEvent } from '@/types'
-import { mockActivityFeed } from '@/mock/mockActivity'
+import { ActivityEvent, Order, TradeHistory } from '@/types'
 
-export function useActivityFeed() {
-  const [events, setEvents] = useState<ActivityEvent[]>(mockActivityFeed)
-  const indexRef = useRef(0)
+type OrderSnapshot = {
+  status: Order['status']
+}
+
+function formatOrderLabel(order: Order) {
+  return `${order.type} ${order.amount} ${order.pair}`
+}
+
+export function useActivityFeed(orders: Order[], history: TradeHistory[]) {
+  const [events, setEvents] = useState<ActivityEvent[]>([])
+  const seenOrdersRef = useRef(new Map<string, OrderSnapshot>())
+  const seenTradesRef = useRef(new Set<string>())
+  const initializedRef = useRef(false)
 
   useEffect(() => {
-    const interval = setInterval(() => {
-      const template = mockActivityFeed[indexRef.current % mockActivityFeed.length]
-      const newEvent: ActivityEvent = {
-        ...template,
-        id: Date.now().toString(),
-        timestamp: new Date(),
-      }
-      setEvents(prev => [newEvent, ...prev].slice(0, 20))
-      indexRef.current++
-    }, 8000)
+    const nextEvents: ActivityEvent[] = []
+    const now = new Date()
 
-    return () => clearInterval(interval)
-  }, [])
+    if (!initializedRef.current) {
+      orders.forEach((order) => {
+        seenOrdersRef.current.set(order.id, { status: order.status })
+      })
+      history.forEach((trade) => {
+        seenTradesRef.current.add(trade.id)
+      })
+      initializedRef.current = true
+      return
+    }
+
+    orders.forEach((order) => {
+      const prev = seenOrdersRef.current.get(order.id)
+      if (!prev) {
+        nextEvents.push({
+          id: `order-${order.id}-${Date.now()}`,
+          timestamp: now,
+          type: 'NEW_ORDER',
+          description: `New order — ${formatOrderLabel(order)}`,
+        })
+      } else if (prev.status !== order.status) {
+        if (order.status === 'IN_SETTLEMENT' || order.status === 'PARTIALLY_FILLED_IN_SETTLEMENT') {
+          nextEvents.push({
+            id: `match-${order.id}-${Date.now()}`,
+            timestamp: now,
+            type: 'MATCH_FOUND',
+            description: `Match found — ${formatOrderLabel(order)}`,
+          })
+        } else if (order.status === 'MATCHED' || order.status === 'PARTIALLY_FILLED') {
+          nextEvents.push({
+            id: `settle-${order.id}-${Date.now()}`,
+            timestamp: now,
+            type: 'SETTLEMENT',
+            description: `Settlement — ${formatOrderLabel(order)}`,
+          })
+        }
+      }
+      seenOrdersRef.current.set(order.id, { status: order.status })
+    })
+
+    history.forEach((trade) => {
+      if (seenTradesRef.current.has(trade.id)) return
+      seenTradesRef.current.add(trade.id)
+      nextEvents.push({
+        id: `trade-${trade.id}-${Date.now()}`,
+        timestamp: now,
+        type: 'SETTLEMENT',
+        description: `Trade settled — ${trade.amount} ${trade.pair}`,
+      })
+    })
+
+    if (nextEvents.length > 0) {
+      setEvents((prev) => [...nextEvents, ...prev].slice(0, 40))
+    }
+  }, [orders, history])
 
   return { events }
 }

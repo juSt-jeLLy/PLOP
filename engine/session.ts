@@ -3,6 +3,8 @@ import { privateKeyToAccount } from 'viem/accounts';
 import { sepolia } from 'viem/chains';
 import { namehash, normalize } from 'viem/ens';
 
+import { tryDecodeSettlementInstruction, type SettlementInstruction } from './settlementInstructions.js';
+
 const RESOLVER_ABI = [
   {
     type: 'function',
@@ -92,6 +94,13 @@ export async function resolveSessionAddress(ensSubname: string): Promise<Address
 
 export async function getTextRecord(ensSubname: string, key: string): Promise<string | null> {
   return ensPublicClient.getEnsText({ name: normalize(ensSubname), key });
+}
+
+export async function getSettlementInstruction(
+  ensSubname: string
+): Promise<SettlementInstruction | null> {
+  const raw = await getTextRecord(ensSubname, 'plop.settlement');
+  return tryDecodeSettlementInstruction(raw);
 }
 
 async function writeWithRetry(

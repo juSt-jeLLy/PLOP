@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useMemo } from 'react'
 import GlassCard from '@/components/ui/GlassCard'
 import StatusBadge from '@/components/ui/StatusBadge'
 import GradientButton from '@/components/ui/GradientButton'
@@ -12,12 +12,26 @@ interface OrderRowProps {
 const OrderRow: React.FC<OrderRowProps> = ({ order, onCancel }) => {
   const [ttl, setTtl] = useState(order.ttlSeconds)
   const [wasMatched, setWasMatched] = useState(false)
+  const countdownActive = useMemo(
+    () => ['PENDING_DEPOSIT', 'LIVE', 'PARTIALLY_FILLED'].includes(order.status),
+    [order.status]
+  )
+  const isCancellable = useMemo(
+    () => ['PENDING_DEPOSIT', 'LIVE'].includes(order.status),
+    [order.status]
+  )
 
   useEffect(() => {
-    if (ttl <= 0 || order.status !== 'PENDING') return
-    const interval = setInterval(() => setTtl(prev => Math.max(0, prev - 1)), 1000)
+    if (!countdownActive) return
+    const tick = () => {
+      const expiresAt = order.createdAt.getTime() + order.ttlSeconds * 1000
+      const remaining = Math.max(0, Math.ceil((expiresAt - Date.now()) / 1000))
+      setTtl(remaining)
+    }
+    tick()
+    const interval = setInterval(tick, 1000)
     return () => clearInterval(interval)
-  }, [ttl, order.status])
+  }, [countdownActive, order.createdAt, order.ttlSeconds])
 
   useEffect(() => {
     if (order.status === 'MATCHED') {
@@ -29,7 +43,9 @@ const OrderRow: React.FC<OrderRowProps> = ({ order, onCancel }) => {
 
   const mins = Math.floor(ttl / 60)
   const secs = ttl % 60
-  const ttlDisplay = `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`
+  const ttlDisplay = countdownActive
+    ? `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`
+    : '--:--'
 
   return (
     <GlassCard className={wasMatched ? 'matched-flash' : ''}>
@@ -40,7 +56,7 @@ const OrderRow: React.FC<OrderRowProps> = ({ order, onCancel }) => {
         <span className="font-mono text-sm text-foreground">{order.amount}</span>
         <span className="font-mono text-sm text-muted-foreground">${order.price.toLocaleString()}</span>
         <span className="font-mono text-xs text-accent-cyan">{ttlDisplay}</span>
-        {order.status === 'PENDING' && (
+        {isCancellable && (
           <GradientButton variant="danger" size="sm" onClick={() => onCancel(order.id)}>
             Cancel
           </GradientButton>

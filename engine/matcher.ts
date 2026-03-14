@@ -1,92 +1,14 @@
-import { namehash, normalize } from 'viem/ens';
-
 import type {
   DecryptedOrder,
   MatchResult,
-  OrderStatus,
   StoredOrder,
 } from '../types';
+import { decryptStoredOrder, parseStoredOrder } from './orderStore.js';
 import { decryptOrderPayload } from './crypto.js';
+import { refundDeposit } from './settlement.js';
 import { createDoc, getDoc, listDocs, updateDoc, waitForSync } from './orders.js';
 
 const PAGE_LIMIT = 50;
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null;
-}
-
-function parseStoredOrder(ddocId: string, raw: unknown): StoredOrder | null {
-  if (!isRecord(raw)) return null;
-  const sessionSubname = typeof raw.sessionSubname === 'string'
-    ? raw.sessionSubname
-    : typeof raw.sessionEns === 'string'
-      ? raw.sessionEns
-      : null;
-  if (!sessionSubname) return null;
-
-  if (!isRecord(raw.encryptedOrder)) return null;
-  const encryptedOrderRaw = raw.encryptedOrder;
-  const encryptedB64 = encryptedOrderRaw.encryptedB64;
-  const nonceB64 = encryptedOrderRaw.nonceB64;
-  const ephemeralPublicKeyB64 = encryptedOrderRaw.ephemeralPublicKeyB64;
-  if (
-    typeof encryptedB64 !== 'string' ||
-    typeof nonceB64 !== 'string' ||
-    typeof ephemeralPublicKeyB64 !== 'string'
-  ) {
-    return null;
-  }
-  const encryptedOrder: StoredOrder['encryptedOrder'] = {
-    encryptedB64,
-    nonceB64,
-    ephemeralPublicKeyB64,
-  };
-
-  const status = raw.status as OrderStatus | undefined;
-  if (typeof status !== 'string') return null;
-
-  if (typeof raw.originalAmount !== 'string') return null;
-  if (typeof raw.remainingAmount !== 'string') return null;
-  if (typeof raw.filledAmount !== 'string') return null;
-  if (typeof raw.submittedAt !== 'number') return null;
-  if (typeof raw.ttlSeconds !== 'number') return null;
-
-  return {
-    ddocId,
-    sessionSubname,
-    status,
-    encryptedOrder,
-    depositAddress: typeof raw.depositAddress === 'string' ? raw.depositAddress : undefined,
-    originalAmount: raw.originalAmount,
-    remainingAmount: raw.remainingAmount,
-    filledAmount: raw.filledAmount,
-    parentDdocId: typeof raw.parentDdocId === 'string' ? raw.parentDdocId : null,
-    submittedAt: raw.submittedAt,
-    ttlSeconds: raw.ttlSeconds,
-    lastFillAt: typeof raw.lastFillAt === 'number' ? raw.lastFillAt : undefined,
-    settledAt: typeof raw.settledAt === 'number' ? raw.settledAt : undefined,
-    settlementTxHash: typeof raw.settlementTxHash === 'string' ? raw.settlementTxHash : undefined,
-    matchedPrice: typeof raw.matchedPrice === 'number' ? raw.matchedPrice : undefined,
-    counterpartyEns: typeof raw.counterpartyEns === 'string' ? raw.counterpartyEns : undefined,
-  };
-}
-
-function toDecryptedOrder(order: StoredOrder): DecryptedOrder {
-  const payload = decryptOrderPayload(order.encryptedOrder);
-  return {
-    ...payload,
-    ddocId: order.ddocId,
-    subname: order.sessionSubname,
-    node: namehash(normalize(order.sessionSubname)) as `0x${string}`,
-    depositAddress: order.depositAddress,
-    parentDdocId: order.parentDdocId ?? null,
-    originalAmount: order.originalAmount,
-    remainingAmount: order.remainingAmount,
-    filledAmount: order.filledAmount,
-    submittedAt: order.submittedAt,
-    ttlSeconds: order.ttlSeconds,
-  };
-}
 
 export async function fetchLiveOrders(): Promise<DecryptedOrder[]> {
   const liveOrders: DecryptedOrder[] = [];
@@ -119,15 +41,38 @@ export async function fetchLiveOrders(): Promise<DecryptedOrder[]> {
 
       const expiresAt = stored.submittedAt + stored.ttlSeconds * 1000;
       if (Date.now() > expiresAt) {
+        let refundTxHash: string | null = stored.refundTxHash ?? null;
+        let refundError: string | null = null;
+        try {
+          const payload = decryptOrderPayload(stored.encryptedOrder);
+          const refundAddress = typeof payload.refundAddress === 'string' ? payload.refundAddress : null;
+          const refundAmount = stored.remainingAmount || stored.originalAmount || payload.amount;
+          if (!refundTxHash && refundAddress && refundAmount) {
+            refundTxHash = await refundDeposit(refundAddress, refundAmount, payload.tokenIn);
+          } else if (!refundAddress) {
+            refundError = 'Missing refund address';
+          }
+        } catch (err) {
+          refundError = String(err);
+        }
+
         await updateDoc(
           stored.ddocId,
-          JSON.stringify({ ...stored, status: 'EXPIRED' })
+          JSON.stringify({
+            ...stored,
+            status: 'EXPIRED',
+            refundTxHash: refundTxHash || undefined,
+            refundRequestedAt: Date.now(),
+            refundCompletedAt: refundTxHash ? Date.now() : undefined,
+            refundError: refundError || undefined,
+            refundLastAttemptAt: refundError ? Date.now() : stored.refundLastAttemptAt,
+          })
         );
         continue;
       }
 
       try {
-        liveOrders.push(toDecryptedOrder(stored));
+        liveOrders.push(decryptStoredOrder(stored));
       } catch (err) {
         console.warn(`[Matcher] Failed to decrypt order ${stored.ddocId}; skipping`, err);
       }

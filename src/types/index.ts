@@ -1,6 +1,16 @@
 export type OrderType = 'BUY' | 'SELL'
-export type OrderStatus = 'PENDING' | 'MATCHED' | 'SETTLED' | 'CANCELLED'
-export type TokenPair = 'ETH/USDC' | 'WBTC/USDC' | 'ETH/WBTC'
+export type OrderStatus =
+  | 'PENDING_DEPOSIT'
+  | 'LIVE'
+  | 'IN_SETTLEMENT'
+  | 'PARTIALLY_FILLED_IN_SETTLEMENT'
+  | 'MATCHED'
+  | 'PARTIALLY_FILLED'
+  | 'EXPIRED'
+  | 'CANCELLED'
+  | 'SETTLEMENT_FAILED'
+  | 'PARTIAL_SETTLEMENT'
+export type TokenPair = string
 export type OrderTTL = '5min' | '15min' | '1hour'
 
 export interface Order {
@@ -12,6 +22,8 @@ export interface Order {
   status: OrderStatus
   ttlSeconds: number
   createdAt: Date
+  tokenIn?: string
+  tokenOut?: string
 }
 
 export interface TradeHistory {
@@ -30,7 +42,10 @@ export interface SessionIdentity {
   derivedAddress: string
   status: 'ACTIVE' | 'ROTATING' | 'INACTIVE'
   sessionNonce: number
+  depositAddress?: string | null
 }
+
+export type SettlementState = 'AUTHORIZED' | 'REQUIRES_SIGNATURE' | 'SIGNING' | 'ERROR' | 'UNAVAILABLE'
 
 export interface CollateralInfo {
   locked: number
@@ -60,9 +75,20 @@ export interface MatchResult {
   settlementStep: 1 | 2 | 3
 }
 
+export interface DepositRequest {
+  orderId: string
+  depositAddress: string
+  amount: number
+  token: string
+  chainLabel?: string
+  side?: OrderType
+  pair?: string
+}
+
 export interface WalletState {
   connected: boolean
   address: string | null
+  chainId?: number
 }
 
 export interface ToastMessage {

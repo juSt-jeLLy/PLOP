@@ -30,16 +30,20 @@ export function getEnginePublicKey(): Uint8Array {
   return nacl.box.keyPair.fromSecretKey(secret).publicKey;
 }
 
-export function decryptOrderPayload(payload: EncryptedOrderPayload): OrderPayload {
+export function decryptMessage(payload: EncryptedOrderPayload): string {
   const secret = getEngineSecretKey();
   const nonce = decodeBase64(payload.nonceB64);
   const senderPublicKey = decodeBase64(payload.ephemeralPublicKeyB64);
   const encrypted = decodeBase64(payload.encryptedB64);
 
   const decrypted = nacl.box.open(encrypted, nonce, senderPublicKey, secret);
-  if (!decrypted) throw new Error('[Crypto] Failed to decrypt order payload');
+  if (!decrypted) throw new Error('[Crypto] Failed to decrypt payload');
 
-  const json = Buffer.from(decrypted).toString('utf8');
+  return Buffer.from(decrypted).toString('utf8');
+}
+
+export function decryptOrderPayload(payload: EncryptedOrderPayload): OrderPayload {
+  const json = decryptMessage(payload);
   return JSON.parse(json) as OrderPayload;
 }
 
@@ -57,5 +61,18 @@ export function encryptForRecipient(
     encryptedB64: encodeBase64(encrypted),
     nonceB64: encodeBase64(nonce),
     ephemeralPublicKeyB64: encodeBase64(senderPublicKey),
+  };
+}
+
+export function encryptForEngine(message: string): EncryptedOrderPayload {
+  const enginePublicKey = getEnginePublicKey();
+  const ephemeral = nacl.box.keyPair();
+  const nonce = nacl.randomBytes(nacl.box.nonceLength);
+  const encrypted = nacl.box(Buffer.from(message, 'utf8'), nonce, enginePublicKey, ephemeral.secretKey);
+
+  return {
+    encryptedB64: encodeBase64(encrypted),
+    nonceB64: encodeBase64(nonce),
+    ephemeralPublicKeyB64: encodeBase64(ephemeral.publicKey),
   };
 }

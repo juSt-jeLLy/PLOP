@@ -6,13 +6,15 @@ import {
   createWalletClient,
   defineChain,
   http,
+  keccak256,
   parseAbi,
   parseEther,
   parseUnits,
+  toBytes,
 } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { sepolia } from 'viem/chains';
-import { normalize } from 'viem/ens';
+import { namehash, normalize } from 'viem/ens';
 
 function requireEnv(name) {
   const value = process.env[name];
@@ -30,6 +32,10 @@ function decodeBase64(value) {
 
 function randomAddress() {
   return `0x${randomBytes(20).toString('hex')}`;
+}
+
+function randomHex32() {
+  return `0x${randomBytes(32).toString('hex')}`;
 }
 
 function isTruthy(value) {
@@ -244,6 +250,93 @@ async function simulateWebhookConfirm(engineUrl, depositAddress) {
   });
 }
 
+function buildEncryptedSettlementPayload(payload, enginePublicKeyB64) {
+  const enginePublicKey = decodeBase64(enginePublicKeyB64);
+  const nonce = nacl.randomBytes(nacl.box.nonceLength);
+  const ephemeral = nacl.box.keyPair();
+  const encrypted = nacl.box(
+    Buffer.from(JSON.stringify(payload), 'utf8'),
+    nonce,
+    enginePublicKey,
+    ephemeral.secretKey
+  );
+  const envelope = {
+    encryptedB64: encodeBase64(encrypted),
+    nonceB64: encodeBase64(nonce),
+    ephemeralPublicKeyB64: encodeBase64(ephemeral.publicKey),
+  };
+  return `plop:v1:${Buffer.from(JSON.stringify(envelope)).toString('base64')}`;
+}
+
+async function submitSettlementAuthorization(engineUrl, subname, enginePublicKeyB64) {
+  const controllerAddress = process.env.SETTLEMENT_CONTROLLER_ADDRESS;
+  if (!controllerAddress) return;
+
+  const signerKey =
+    process.env.SETTLEMENT_SIGNER_PRIVATE_KEY ||
+    process.env.HOODI_FUNDING_PRIVATE_KEY ||
+    process.env.ENGINE_PRIVATE_KEY ||
+    process.env.DEPLOYER_PRIVATE_KEY;
+
+  if (!signerKey) {
+    throw new Error('[Config] Missing SETTLEMENT_SIGNER_PRIVATE_KEY for settlement authorization');
+  }
+
+  const signer = privateKeyToAccount(signerKey);
+  const nonce = randomHex32();
+  const expiry = Math.floor(Date.now() / 1000) + 3600;
+  const payload = buildEncryptedSettlementPayload(
+    {
+      recipient: signer.address,
+      chainId: 560048,
+      expiry,
+      nonce,
+    },
+    enginePublicKeyB64
+  );
+
+  const payloadHash = keccak256(toBytes(payload));
+  const node = namehash(normalize(subname));
+
+  const walletClient = createWalletClient({ account: signer, chain: sepolia, transport: http(requireEnv('ETH_SEPOLIA_RPC')) });
+  const signature = await walletClient.signTypedData({
+    account: signer,
+    domain: {
+      name: 'PlopSettlementController',
+      version: '1',
+      chainId: sepolia.id,
+      verifyingContract: controllerAddress,
+    },
+    types: {
+      SettlementAuthorization: [
+        { name: 'node', type: 'bytes32' },
+        { name: 'payloadHash', type: 'bytes32' },
+        { name: 'expiry', type: 'uint256' },
+        { name: 'nonce', type: 'bytes32' },
+      ],
+    },
+    primaryType: 'SettlementAuthorization',
+    message: {
+      node,
+      payloadHash,
+      expiry: BigInt(expiry),
+      nonce,
+    },
+  });
+
+  await fetchJson(`${engineUrl}/session/settlement`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      ensSubname: subname,
+      payload,
+      expiry,
+      nonce,
+      signature,
+    }),
+  });
+}
+
 function requireSafeRecipient(useRealDeposit) {
   if (!useRealDeposit) return;
   if (process.env.ENGINE_TEST_RECIPIENT) return;
@@ -400,6 +493,14 @@ async function main() {
     throw new Error('[ERC20 Smoke] Session create failed');
   }
   console.log('[ERC20 Smoke] Sessions:', { subnameA, depositA, subnameB, depositB });
+
+  if (process.env.SETTLEMENT_CONTROLLER_ADDRESS) {
+    console.log('[ERC20 Smoke] Submitting settlement authorizations...');
+    await Promise.all([
+      submitSettlementAuthorization(engineUrl, subnameA, requireEnv('ENGINE_PUBLIC_KEY')),
+      submitSettlementAuthorization(engineUrl, subnameB, requireEnv('ENGINE_PUBLIC_KEY')),
+    ]);
+  }
 
   console.log('[ERC20 Smoke] Verifying ENS text records...');
   const ensClient = createPublicClient({ chain: sepolia, transport: http(rpcUrl) });

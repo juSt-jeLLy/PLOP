@@ -4,6 +4,7 @@ import type { OrderPayload, OrderStatus, StoredOrder } from '../types';
 import { decryptOrderPayload } from './crypto.js';
 import { listDocs, updateDoc } from './orders.js';
 import { getTextRecord } from './session.js';
+import { refundDeposit } from './settlement.js';
 
 const PAGE_LIMIT = 50;
 const NATIVE_TOKENS = new Set(['eth', 'hteth', 'teth']);
@@ -139,6 +140,14 @@ function isPendingDeposit(status: OrderStatus | undefined): boolean {
   return status === 'PENDING_DEPOSIT';
 }
 
+function isCancelled(status: OrderStatus | undefined): boolean {
+  return status === 'CANCELLED';
+}
+
+function isExpired(status: OrderStatus | undefined): boolean {
+  return status === 'EXPIRED';
+}
+
 async function getOrderPayload(order: StoredOrder): Promise<OrderPayload | null> {
   try {
     return decryptOrderPayload(order.encryptedOrder);
@@ -155,6 +164,28 @@ async function markLive(ddocId: string, order: StoredOrder): Promise<void> {
       ...order,
       status: 'LIVE',
       depositConfirmedAt: Date.now(),
+    })
+  );
+}
+
+async function markRefunded(ddocId: string, order: StoredOrder, txHash: string): Promise<void> {
+  await updateDoc(
+    ddocId,
+    JSON.stringify({
+      ...order,
+      refundTxHash: txHash,
+      refundCompletedAt: Date.now(),
+    })
+  );
+}
+
+async function markRefundFailed(ddocId: string, order: StoredOrder, error: unknown): Promise<void> {
+  await updateDoc(
+    ddocId,
+    JSON.stringify({
+      ...order,
+      refundError: String(error),
+      refundLastAttemptAt: Date.now(),
     })
   );
 }
@@ -183,7 +214,7 @@ async function checkPendingDeposits(): Promise<void> {
           continue;
         }
 
-        if (!parsed || !isPendingDeposit(parsed.status)) continue;
+        if (!parsed || (!isPendingDeposit(parsed.status) && !isCancelled(parsed.status) && !isExpired(parsed.status))) continue;
 
         const payload = await getOrderPayload(parsed);
         if (!payload) continue;
@@ -210,9 +241,28 @@ async function checkPendingDeposits(): Promise<void> {
           continue;
         }
 
-        if (balance >= required) {
-          await markLive(doc.ddocId, parsed);
-          console.log('[Hoodi] Deposit confirmed, order LIVE:', doc.ddocId);
+        if (isPendingDeposit(parsed.status)) {
+          if (balance >= required) {
+            await markLive(doc.ddocId, parsed);
+            console.log('[Hoodi] Deposit confirmed, order LIVE:', doc.ddocId);
+          }
+        } else if (isCancelled(parsed.status) || isExpired(parsed.status)) {
+          if (parsed.refundTxHash) continue;
+          if (balance >= required) {
+            const refundAddress = typeof payload.refundAddress === 'string' ? payload.refundAddress : null;
+            if (!refundAddress) {
+              await markRefundFailed(doc.ddocId, parsed, 'Missing refund address');
+              continue;
+            }
+            try {
+              const txHash = await refundDeposit(refundAddress, required.toString(), payload.tokenIn);
+              await markRefunded(doc.ddocId, parsed, txHash);
+              console.log('[Hoodi] Refund sent for cancelled order:', doc.ddocId);
+            } catch (err) {
+              await markRefundFailed(doc.ddocId, parsed, err);
+              console.warn('[Hoodi] Refund failed for cancelled order:', doc.ddocId, err);
+            }
+          }
         }
       }
 

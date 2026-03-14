@@ -2,7 +2,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import solc from 'solc';
 
-const contractPath = path.resolve('contracts/DarkPoolResolver.sol');
+const resolverPath = path.resolve('contracts/DarkPoolResolver.sol');
+const controllerPath = path.resolve('contracts/SettlementController.sol');
 const interfacePath = path.resolve('contracts/interfaces/IExtendedResolver.sol');
 
 function readSource(filePath) {
@@ -15,7 +16,8 @@ function readSource(filePath) {
 const input = {
   language: 'Solidity',
   sources: {
-    'contracts/DarkPoolResolver.sol': { content: readSource(contractPath) },
+    'contracts/DarkPoolResolver.sol': { content: readSource(resolverPath) },
+    'contracts/SettlementController.sol': { content: readSource(controllerPath) },
     'contracts/interfaces/IExtendedResolver.sol': { content: readSource(interfacePath) },
   },
   settings: {
@@ -40,21 +42,32 @@ if (output.errors?.length) {
   }
 }
 
-const compiled = output.contracts?.['contracts/DarkPoolResolver.sol']?.DarkPoolResolver;
-if (!compiled?.abi || !compiled?.evm?.bytecode?.object) {
-  throw new Error('[Compile] Missing abi/bytecode for DarkPoolResolver');
+const contracts = [
+  {
+    source: 'contracts/DarkPoolResolver.sol',
+    name: 'DarkPoolResolver',
+    outputDir: 'artifacts/contracts/DarkPoolResolver.sol',
+  },
+  {
+    source: 'contracts/SettlementController.sol',
+    name: 'SettlementController',
+    outputDir: 'artifacts/contracts/SettlementController.sol',
+  },
+];
+
+for (const entry of contracts) {
+  const compiled = output.contracts?.[entry.source]?.[entry.name];
+  if (!compiled?.abi || !compiled?.evm?.bytecode?.object) {
+    throw new Error(`[Compile] Missing abi/bytecode for ${entry.name}`);
+  }
+
+  const artifactDir = path.resolve(entry.outputDir);
+  const artifactPath = path.join(artifactDir, `${entry.name}.json`);
+  fs.mkdirSync(artifactDir, { recursive: true });
+  const artifact = {
+    abi: compiled.abi,
+    bytecode: `0x${compiled.evm.bytecode.object}`,
+  };
+  fs.writeFileSync(artifactPath, JSON.stringify(artifact, null, 2));
+  console.log('Wrote artifact:', artifactPath);
 }
-
-const artifactDir = path.resolve('artifacts/contracts/DarkPoolResolver.sol');
-const artifactPath = path.join(artifactDir, 'DarkPoolResolver.json');
-
-fs.mkdirSync(artifactDir, { recursive: true });
-
-const artifact = {
-  abi: compiled.abi,
-  bytecode: `0x${compiled.evm.bytecode.object}`,
-};
-
-fs.writeFileSync(artifactPath, JSON.stringify(artifact, null, 2));
-
-console.log('Wrote artifact:', artifactPath);

@@ -9,10 +9,16 @@ interface StatusBadgeProps {
 }
 
 const config: Record<BadgeStatus, { border: string; text: string; dot?: 'green' | 'cyan' | 'yellow' | 'red' | 'purple' }> = {
-  PENDING: { border: 'border-accent-yellow/50', text: 'text-accent-yellow', dot: 'yellow' },
+  PENDING_DEPOSIT: { border: 'border-accent-yellow/50', text: 'text-accent-yellow', dot: 'yellow' },
+  LIVE: { border: 'border-accent-green/50', text: 'text-accent-green', dot: 'green' },
+  IN_SETTLEMENT: { border: 'border-accent-cyan/50', text: 'text-accent-cyan', dot: 'cyan' },
+  PARTIALLY_FILLED_IN_SETTLEMENT: { border: 'border-accent-cyan/50', text: 'text-accent-cyan', dot: 'cyan' },
+  PARTIALLY_FILLED: { border: 'border-accent-yellow/50', text: 'text-accent-yellow', dot: 'yellow' },
   MATCHED: { border: 'border-accent-green/50', text: 'text-accent-green', dot: 'green' },
-  SETTLED: { border: 'border-muted-foreground/30', text: 'text-muted-foreground' },
+  EXPIRED: { border: 'border-muted-foreground/30', text: 'text-muted-foreground' },
   CANCELLED: { border: 'border-accent-red/50', text: 'text-accent-red' },
+  SETTLEMENT_FAILED: { border: 'border-accent-red/50', text: 'text-accent-red' },
+  PARTIAL_SETTLEMENT: { border: 'border-accent-yellow/50', text: 'text-accent-yellow' },
   ACTIVE: { border: 'border-accent-green/50', text: 'text-accent-green', dot: 'green' },
   ROTATING: { border: 'border-accent-cyan/50', text: 'text-accent-cyan', dot: 'cyan' },
   INACTIVE: { border: 'border-muted-foreground/30', text: 'text-muted-foreground' },

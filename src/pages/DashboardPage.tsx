@@ -1,9 +1,9 @@
+// @refresh reset
 import React, { useState, useCallback } from 'react'
 import { useWallet } from '@/hooks/useWallet'
 import { useSession } from '@/hooks/useSession'
 import { useOrders } from '@/hooks/useOrders'
-import { useActivityFeed } from '@/hooks/useActivityFeed'
-import { useMatchPolling } from '@/hooks/useMatchPolling'
+import { usePoolActivity } from '@/hooks/usePoolActivity'
 import { ToastMessage } from '@/types'
 import GradientBackground from '@/components/layout/GradientBackground'
 import Navbar from '@/components/layout/Navbar'
@@ -22,14 +22,40 @@ import TradeHistoryTable from '@/components/orders/TradeHistoryTable'
 import ActivityFeed from '@/components/activity/ActivityFeed'
 import OrderDepthChart from '@/components/activity/OrderDepthChart'
 import SettlementQueue from '@/components/activity/SettlementQueue'
-import MatchFoundModal from '@/components/modals/MatchFoundModal'
+import DepositInstructionsModal from '@/components/modals/DepositInstructionsModal'
 
 const DashboardPage: React.FC = () => {
   const { walletState, connectWallet, disconnectWallet } = useWallet()
-  const { session, collateral, stats, rotateAddress, isRotating } = useSession()
-  const { activeOrders, tradeHistory, submitOrder, cancelOrder, isSubmitting, lastSubmitTime } = useOrders()
-  const { events } = useActivityFeed()
-  const { currentMatch, dismissMatch } = useMatchPolling(lastSubmitTime)
+  const {
+    session,
+    collateral,
+    stats,
+    rotateAddress,
+    isRotating,
+    sessionError,
+    settlementState,
+    retrySettlement,
+    engineConfig,
+    engineConfigStatus,
+    reloadEngineConfig,
+  } = useSession(walletState.address)
+  const {
+    activeOrders,
+    tradeHistory,
+    submitOrder,
+    cancelOrder,
+    isSubmitting,
+    lastSubmitTime,
+    depositRequest,
+    clearDepositRequest,
+  } = useOrders({
+    sessionSubname: session.ensSubname,
+    walletConnected: walletState.connected,
+    enginePublicKey: engineConfig?.enginePublicKey ?? null,
+    sessionDepositAddress: session.depositAddress || null,
+    walletAddress: walletState.address,
+  })
+  const pool = usePoolActivity()
   const [activeTab, setActiveTab] = useState<'new' | 'active' | 'history'>('new')
   const [toasts, setToasts] = useState<ToastMessage[]>([])
 
@@ -41,11 +67,6 @@ const DashboardPage: React.FC = () => {
     setToasts(prev => prev.filter(t => t.id !== id))
   }, [])
 
-  const handleSettlementComplete = useCallback(() => {
-    rotateAddress()
-    addToast({ type: 'rotation', message: '🔄 Address rotated — session closed' })
-  }, [rotateAddress, addToast])
-
   return (
     <>
       <GradientBackground />
@@ -53,7 +74,19 @@ const DashboardPage: React.FC = () => {
       <DashboardLayout
         leftSidebar={
           <LeftSidebar>
-            <SessionIdentityCard session={session} onRotate={rotateAddress} isRotating={isRotating} />
+            <SessionIdentityCard
+              session={session}
+              onRotate={rotateAddress}
+              isRotating={isRotating}
+              walletConnected={walletState.connected}
+              onConnect={connectWallet}
+              walletAddress={walletState.address}
+              settlementState={settlementState}
+              onAuthorizeSettlement={retrySettlement}
+              configStatus={engineConfigStatus}
+              onReloadConfig={reloadEngineConfig}
+              error={sessionError}
+            />
             <CollateralPanel collateral={collateral} />
             <SessionStatsPanel stats={stats} />
           </LeftSidebar>
@@ -61,7 +94,14 @@ const DashboardPage: React.FC = () => {
         centerPanel={
           <CenterPanel>
             <OrderTabs activeTab={activeTab} onTabChange={setActiveTab}>
-              {activeTab === 'new' && <NewOrderForm onSubmit={submitOrder} isSubmitting={isSubmitting} />}
+              {activeTab === 'new' && (
+                <NewOrderForm
+                  onSubmit={submitOrder}
+                  isSubmitting={isSubmitting}
+                  walletConnected={walletState.connected}
+                  onConnect={connectWallet}
+                />
+              )}
               {activeTab === 'active' && <MyOrdersTable orders={activeOrders} onCancel={cancelOrder} />}
               {activeTab === 'history' && <TradeHistoryTable history={tradeHistory} />}
             </OrderTabs>
@@ -69,16 +109,24 @@ const DashboardPage: React.FC = () => {
         }
         rightSidebar={
           <RightSidebar>
-            <ActivityFeed events={events} />
-            <OrderDepthChart buyPressure={65} sellPressure={45} midPrice={3241} />
-            <SettlementQueue pendingSettlements={[]} />
+            <ActivityFeed events={pool.events} />
+            <OrderDepthChart
+              buyPressure={pool.depthStats.buyPressure}
+              sellPressure={pool.depthStats.sellPressure}
+              midPrice={pool.depthStats.midPrice}
+            />
+            <SettlementQueue pendingSettlements={pool.pendingSettlements} />
           </RightSidebar>
         }
       />
-      <MatchFoundModal
-        match={currentMatch}
-        onDismiss={dismissMatch}
-        onSettlementComplete={handleSettlementComplete}
+      <DepositInstructionsModal
+        request={depositRequest}
+        onDismiss={clearDepositRequest}
+        orderStatus={
+          depositRequest
+            ? activeOrders.find((order) => order.id === depositRequest.orderId)?.status ?? null
+            : null
+        }
       />
       <ToastContainer toasts={toasts} onDismiss={removeToast} />
     </>

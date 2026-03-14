@@ -20,12 +20,14 @@ contract DarkPoolResolver is IExtendedResolver {
     uint256 public constant EPOCH_SECONDS = 3600;
 
     address public engine;
+    address public settlementController;
 
     mapping(bytes32 => uint256) public rotationNonces;
     mapping(bytes32 => mapping(string => string)) private textRecords;
 
     event AddressRotated(bytes32 indexed node, uint256 newNonce);
     event TextRecordUpdated(bytes32 indexed node, string key, string value);
+    event SettlementControllerUpdated(address indexed controller);
 
     constructor(address _engine) {
         require(_engine != address(0), "DarkPoolResolver: engine required");
@@ -34,6 +36,19 @@ contract DarkPoolResolver is IExtendedResolver {
 
     modifier onlyEngine() {
         require(msg.sender == engine, "DarkPoolResolver: not engine");
+        _;
+    }
+
+    modifier onlyEngineOrSettlementController(string memory key) {
+        if (msg.sender == engine) {
+            _;
+            return;
+        }
+        require(msg.sender == settlementController, "DarkPoolResolver: not authorized");
+        require(
+            keccak256(bytes(key)) == keccak256(bytes("plop.settlement")),
+            "DarkPoolResolver: settlement only"
+        );
         _;
     }
 
@@ -82,10 +97,15 @@ contract DarkPoolResolver is IExtendedResolver {
     /// @notice Engine-controlled metadata updates (deposit address, receipts, etc.).
     function setText(bytes32 node, string calldata key, string calldata value)
         external
-        onlyEngine
+        onlyEngineOrSettlementController(key)
     {
         textRecords[node][key] = value;
         emit TextRecordUpdated(node, key, value);
+    }
+
+    function setSettlementController(address controller) external onlyEngine {
+        settlementController = controller;
+        emit SettlementControllerUpdated(controller);
     }
 
     /// @notice Increment nonce to rotate the derived address.

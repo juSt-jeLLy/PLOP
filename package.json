@@ -12,6 +12,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "deploy:resolver": "node scripts/deployResolver.mjs",
+    "deploy:settlement-controller": "node scripts/deploySettlementController.mjs",
     "compile:resolver": "node scripts/compileResolver.mjs",
     "setup:bitgo": "node scripts/setupBitgo.mjs",
     "engine": "tsx engine/index.ts",

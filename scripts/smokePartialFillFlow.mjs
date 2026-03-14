@@ -1,9 +1,9 @@
 import 'dotenv/config';
 import nacl from 'tweetnacl';
 import { createHmac, randomBytes } from 'node:crypto';
-import { createPublicClient, createWalletClient, defineChain, http, parseEther } from 'viem';
+import { createPublicClient, createWalletClient, defineChain, http, keccak256, parseEther, toBytes } from 'viem';
 import { sepolia } from 'viem/chains';
-import { normalize } from 'viem/ens';
+import { namehash, normalize } from 'viem/ens';
 import { privateKeyToAccount } from 'viem/accounts';
 
 function requireEnv(name) {
@@ -18,6 +18,10 @@ function encodeBase64(value) {
 
 function decodeBase64(value) {
   return Uint8Array.from(Buffer.from(value, 'base64'));
+}
+
+function randomHex32() {
+  return `0x${randomBytes(32).toString('hex')}`;
 }
 
 function isTruthy(value) {
@@ -81,6 +85,93 @@ async function simulateWebhookConfirm(engineUrl, depositAddress) {
       ...(signed ? { 'x-signature-sha256': signed.signature } : {}),
     },
     body: signed ? signed.body : JSON.stringify(webhookPayload),
+  });
+}
+
+function buildEncryptedSettlementPayload(payload, enginePublicKeyB64) {
+  const enginePublicKey = decodeBase64(enginePublicKeyB64);
+  const nonce = nacl.randomBytes(nacl.box.nonceLength);
+  const ephemeral = nacl.box.keyPair();
+  const encrypted = nacl.box(
+    Buffer.from(JSON.stringify(payload), 'utf8'),
+    nonce,
+    enginePublicKey,
+    ephemeral.secretKey
+  );
+  const envelope = {
+    encryptedB64: encodeBase64(encrypted),
+    nonceB64: encodeBase64(nonce),
+    ephemeralPublicKeyB64: encodeBase64(ephemeral.publicKey),
+  };
+  return `plop:v1:${Buffer.from(JSON.stringify(envelope)).toString('base64')}`;
+}
+
+async function submitSettlementAuthorization(engineUrl, subname, enginePublicKeyB64) {
+  const controllerAddress = process.env.SETTLEMENT_CONTROLLER_ADDRESS;
+  if (!controllerAddress) return;
+
+  const signerKey =
+    process.env.SETTLEMENT_SIGNER_PRIVATE_KEY ||
+    process.env.HOODI_FUNDING_PRIVATE_KEY ||
+    process.env.ENGINE_PRIVATE_KEY ||
+    process.env.DEPLOYER_PRIVATE_KEY;
+
+  if (!signerKey) {
+    throw new Error('[Config] Missing SETTLEMENT_SIGNER_PRIVATE_KEY for settlement authorization');
+  }
+
+  const signer = privateKeyToAccount(signerKey);
+  const nonce = randomHex32();
+  const expiry = Math.floor(Date.now() / 1000) + 3600;
+  const payload = buildEncryptedSettlementPayload(
+    {
+      recipient: signer.address,
+      chainId: 560048,
+      expiry,
+      nonce,
+    },
+    enginePublicKeyB64
+  );
+
+  const payloadHash = keccak256(toBytes(payload));
+  const node = namehash(normalize(subname));
+
+  const walletClient = createWalletClient({ account: signer, chain: sepolia, transport: http(requireEnv('ETH_SEPOLIA_RPC')) });
+  const signature = await walletClient.signTypedData({
+    account: signer,
+    domain: {
+      name: 'PlopSettlementController',
+      version: '1',
+      chainId: sepolia.id,
+      verifyingContract: controllerAddress,
+    },
+    types: {
+      SettlementAuthorization: [
+        { name: 'node', type: 'bytes32' },
+        { name: 'payloadHash', type: 'bytes32' },
+        { name: 'expiry', type: 'uint256' },
+        { name: 'nonce', type: 'bytes32' },
+      ],
+    },
+    primaryType: 'SettlementAuthorization',
+    message: {
+      node,
+      payloadHash,
+      expiry: BigInt(expiry),
+      nonce,
+    },
+  });
+
+  await fetchJson(`${engineUrl}/session/settlement`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      ensSubname: subname,
+      payload,
+      expiry,
+      nonce,
+      signature,
+    }),
   });
 }
 
@@ -287,6 +378,14 @@ async function main() {
   const depositB = sessionB?.depositAddress;
   if (!subnameA || !subnameB || !depositA || !depositB) {
     throw new Error('[Partial Smoke] Session create failed');
+  }
+
+  if (process.env.SETTLEMENT_CONTROLLER_ADDRESS) {
+    console.log('[Partial Smoke] Submitting settlement authorizations...');
+    await Promise.all([
+      submitSettlementAuthorization(engineUrl, subnameA, requireEnv('ENGINE_PUBLIC_KEY')),
+      submitSettlementAuthorization(engineUrl, subnameB, requireEnv('ENGINE_PUBLIC_KEY')),
+    ]);
   }
 
   console.log('[Partial Smoke] Verifying ENS text records...');

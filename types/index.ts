@@ -6,6 +6,7 @@ export type OrderStatus =
   | 'MATCHED'
   | 'PARTIALLY_FILLED'
   | 'EXPIRED'
+  | 'CANCELLED'
   | 'SETTLEMENT_FAILED'
   | 'PARTIAL_SETTLEMENT';
 
@@ -25,6 +26,7 @@ export type OrderPayload = {
   ttlSeconds: number;
   type: OrderSide;
   traderPublicKey: string;
+  refundAddress?: string;
 } & Record<string, unknown>;
 
 export interface StoredOrder {
@@ -47,6 +49,11 @@ export interface StoredOrder {
   settlementError?: string;
   matchedPrice?: number;
   counterpartyEns?: string;
+  refundTxHash?: string;
+  refundError?: string;
+  refundRequestedAt?: number;
+  refundCompletedAt?: number;
+  refundLastAttemptAt?: number;
 }
 
 export interface DecryptedOrder extends OrderPayload {

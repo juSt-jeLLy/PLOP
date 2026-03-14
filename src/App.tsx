@@ -10,7 +10,7 @@ const queryClient = new QueryClient();
 const App = () => (
   <QueryClientProvider client={queryClient}>
     <TooltipProvider>
-      <BrowserRouter>
+      <BrowserRouter future={{ v7_relativeSplatPath: true }}>
         <Routes>
           <Route path="/" element={<LandingPage />} />
           <Route path="/dashboard" element={<DashboardPage />} />

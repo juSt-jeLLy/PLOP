@@ -278,6 +278,21 @@ export async function settleTokenPair(
   }
 }
 
+export async function refundDeposit(
+  refundAddress: string,
+  amountWei: string,
+  tokenIn: string
+): Promise<string> {
+  await whitelistBothAddresses(refundAddress, refundAddress);
+
+  if (normalizeToken(tokenIn) === 'eth') {
+    return sendEthSingle(refundAddress, amountWei);
+  }
+
+  const tokenName = resolveTokenName(tokenIn);
+  return sendToken(refundAddress, amountWei, tokenName);
+}
+
 export async function createDepositAddress(label: string): Promise<string> {
   const wallet = await getWalletInstance();
   const result = await wallet.createAddress({ label });
