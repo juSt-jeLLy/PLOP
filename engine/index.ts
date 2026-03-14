@@ -12,6 +12,7 @@ import {
   settleEthOnly,
   settleTokenPair,
 } from './settlement.js';
+import { startHoodiDepositWatcher } from './hoodi.js';
 import {
   generateSubname,
   resolveSessionAddress,
@@ -215,6 +216,7 @@ async function matchingCycle(): Promise<void> {
 
 app.listen(PORT, () => {
   console.log(`[Engine] listening on ${PORT}`);
+  startHoodiDepositWatcher();
   setInterval(() => {
     matchingCycle().catch((err) => {
       console.error('[Engine] Matching cycle failed:', err);
