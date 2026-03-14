@@ -54,7 +54,7 @@ export const ensWalletClient = createWalletClient({
 
 let ensWriteQueue: Promise<unknown> = Promise.resolve();
 
-async function enqueueEnsWrite<T>(fn: () => Promise<T>): Promise<T> {
+export async function withEnsWriteLock<T>(fn: () => Promise<T>): Promise<T> {
   const run = ensWriteQueue.then(fn, fn);
   ensWriteQueue = run.then(
     () => undefined,
@@ -63,7 +63,7 @@ async function enqueueEnsWrite<T>(fn: () => Promise<T>): Promise<T> {
   return run;
 }
 
-async function waitForPendingNonceClear(timeoutMs = 180000): Promise<void> {
+export async function waitForPendingNonceClear(timeoutMs = 180000): Promise<void> {
   const account = ensWalletClient.account?.address;
   if (!account) return;
   const maxPending = Number(process.env.ENS_MAX_PENDING || 0);
@@ -115,6 +115,12 @@ async function writeWithRetry(
     } catch (err) {
       lastError = err;
       console.error(`[ENS] ${label} attempt ${attempt} failed`, err);
+      const message = String(err);
+      if (message.includes('in-flight transaction limit reached')) {
+        await waitForPendingNonceClear(240000);
+        await new Promise((resolve) => setTimeout(resolve, 5000 * attempt));
+        continue;
+      }
       if (attempt < maxRetries) {
         await new Promise((resolve) => setTimeout(resolve, 2000));
       }
@@ -129,7 +135,7 @@ export async function setTextRecord(
   value: string,
   options?: { waitForReceipt?: boolean; receiptTimeoutMs?: number }
 ): Promise<Hash> {
-  return enqueueEnsWrite(async () => {
+  return withEnsWriteLock(async () => {
     await waitForPendingNonceClear();
     const node = getEnsNode(ensSubname);
     const txHash = await writeWithRetry(
@@ -165,7 +171,7 @@ export async function setSessionMetadata(
 }
 
 export async function rotateSessionAddress(ensSubname: string): Promise<Hash> {
-  return enqueueEnsWrite(async () => {
+  return withEnsWriteLock(async () => {
     await waitForPendingNonceClear();
     const node = getEnsNode(ensSubname);
     const txHash = await writeWithRetry(

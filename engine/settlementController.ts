@@ -1,6 +1,6 @@
 import { type Address, type Hash } from 'viem';
 
-import { ensPublicClient, ensWalletClient, getEnsNode } from './session.js';
+import { ensPublicClient, ensWalletClient, getEnsNode, waitForPendingNonceClear, withEnsWriteLock } from './session.js';
 
 const CONTROLLER_ABI = [
   {
@@ -24,32 +24,6 @@ function requireEnv(name: string): string {
   return value;
 }
 
-let settlementWriteQueue: Promise<unknown> = Promise.resolve();
-
-async function enqueueSettlementWrite<T>(fn: () => Promise<T>): Promise<T> {
-  const run = settlementWriteQueue.then(fn, fn);
-  settlementWriteQueue = run.then(
-    () => undefined,
-    () => undefined
-  );
-  return run;
-}
-
-async function waitForPendingNonceClear(timeoutMs = 180000): Promise<void> {
-  const account = ensWalletClient.account?.address;
-  if (!account) return;
-  const start = Date.now();
-  while (Date.now() - start < timeoutMs) {
-    const [latest, pending] = await Promise.all([
-      ensPublicClient.getTransactionCount({ address: account, blockTag: 'latest' }),
-      ensPublicClient.getTransactionCount({ address: account, blockTag: 'pending' }),
-    ]);
-    if (pending <= latest) return;
-    await new Promise((resolve) => setTimeout(resolve, 5000));
-  }
-  throw new Error('[Settlement] Pending transactions still in flight; wait and retry');
-}
-
 export async function recordSettlementInstruction(options: {
   ensSubname: string;
   payload: string;
@@ -57,7 +31,7 @@ export async function recordSettlementInstruction(options: {
   nonce: string;
   signature: string;
 }): Promise<Hash> {
-  return enqueueSettlementWrite(async () => {
+  return withEnsWriteLock(async () => {
     if (!options.payload.startsWith('plop:v1:')) {
       throw new Error('[Settlement] Payload must start with plop:v1:');
     }
