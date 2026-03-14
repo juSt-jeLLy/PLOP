@@ -4,10 +4,17 @@ import GradientButton from '@/components/ui/GradientButton'
 import TokenPairSelect from '@/components/ui/TokenPairSelect'
 import MonoLabel from '@/components/ui/MonoLabel'
 import { TokenPair, OrderType } from '@/types'
-import { getDefaultPairs, getDemoPrice, parseTokenPair } from '@/lib/tokens'
+import { getDefaultPairs, getDefaultSlippageBps, getDemoPrice, parseTokenPair } from '@/lib/tokens'
 
 interface NewOrderFormProps {
-  onSubmit: (data: { type: OrderType; pair: TokenPair; amount: number; price: number; ttlSeconds: number }) => void
+  onSubmit: (data: {
+    type: OrderType
+    pair: TokenPair
+    amount: number
+    price: number
+    ttlSeconds: number
+    slippageBps: number
+  }) => void
   isSubmitting: boolean
   walletConnected?: boolean
   onConnect?: () => void
@@ -19,6 +26,13 @@ const ttlOptions = [
   { label: '1hour', value: 3600 },
 ]
 
+const slippageOptions = [
+  { label: '0.5%', value: 50 },
+  { label: '1%', value: 100 },
+  { label: '2%', value: 200 },
+  { label: '5%', value: 500 },
+]
+
 const defaultPairs = getDefaultPairs()
 
 const NewOrderForm: React.FC<NewOrderFormProps> = ({ onSubmit, isSubmitting, walletConnected = true, onConnect }) => {
@@ -26,6 +40,7 @@ const NewOrderForm: React.FC<NewOrderFormProps> = ({ onSubmit, isSubmitting, wal
   const [pair, setPair] = useState<TokenPair>((defaultPairs[0] || 'ETH/ETH') as TokenPair)
   const [amount, setAmount] = useState('')
   const [ttl, setTtl] = useState(300)
+  const [slippageBps, setSlippageBps] = useState(getDefaultSlippageBps())
   const [showSuccess, setShowSuccess] = useState(false)
   const demoPrice = getDemoPrice(pair)
   const { base, quote } = parseTokenPair(pair)
@@ -42,7 +57,14 @@ const NewOrderForm: React.FC<NewOrderFormProps> = ({ onSubmit, isSubmitting, wal
 
   const handleSubmit = () => {
     if (!amount || !canSubmit) return
-    onSubmit({ type: orderType, pair, amount: parseFloat(amount), price: demoPrice as number, ttlSeconds: ttl })
+    onSubmit({
+      type: orderType,
+      pair,
+      amount: parseFloat(amount),
+      price: demoPrice as number,
+      ttlSeconds: ttl,
+      slippageBps,
+    })
     setTimeout(() => {
       setShowSuccess(true)
       setTimeout(() => {
@@ -119,6 +141,29 @@ const NewOrderForm: React.FC<NewOrderFormProps> = ({ onSubmit, isSubmitting, wal
                 {opt.label}
               </button>
             ))}
+          </div>
+        </div>
+
+        <div>
+          <MonoLabel>Slippage Tolerance</MonoLabel>
+          <div className="flex gap-2 mt-1.5">
+            {slippageOptions.map(opt => (
+              <button
+                key={opt.value}
+                onClick={() => setSlippageBps(opt.value)}
+                disabled={!walletConnected}
+                className={`flex-1 py-1.5 rounded-md text-xs font-mono transition-all ${
+                  slippageBps === opt.value
+                    ? 'bg-primary/20 text-primary border border-primary/30'
+                    : 'bg-secondary text-muted-foreground border border-border'
+                } ${!walletConnected ? 'opacity-60 cursor-not-allowed' : ''}`}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+          <div className="mt-2 text-[11px] font-mono text-muted-foreground">
+            Max price deviation accepted at match time: {(slippageBps / 100).toFixed(2)}%
           </div>
         </div>
 

@@ -95,6 +95,7 @@ graph TD
    - UI encrypts payload (tweetnacl) with engine public key.
    - UI posts `/orders` to engine.
    - Engine stores encrypted order as a Fileverse ddoc (no plaintext order data; deposit address is embedded in the encrypted payload, not in ENS).
+   - Each order includes a slippage tolerance (default 2%, set in the UI) that is enforced at match time.
 
 4. Deposit to BitGo (Hoodi)
    - UI prompts deposit of the **token-in** amount to the BitGo address.
@@ -247,6 +248,7 @@ Critical gotchas from the build docs: settlement recipients are required (no ENS
 - Orders tab:
   - Active orders show live states.
   - History includes matched, partial, cancelled, expired, and refund status **across prior session subnames** stored locally for the connected wallet.
+  - New orders include a slippage tolerance selector (0.5–5%) used by the matcher.
 - Pool activity uses `/orders/all` (global, not only local session).
 
 ## Refund logic (cancelled and expired)
@@ -315,5 +317,6 @@ Frontend:
 - `VITE_DEFAULT_PAIRS`
 - `VITE_TOKEN_DECIMALS`
 - `VITE_TOKEN_ADDRESS_MAP`
+- `VITE_DEFAULT_SLIPPAGE_BPS` (default 200 = 2%)
 
 For the full list, refer to `.env.example` and [SETUP.MD](SETUP.MD).

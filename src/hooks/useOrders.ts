@@ -2,7 +2,7 @@ import { useState, useCallback, useEffect, useRef } from 'react'
 import nacl from 'tweetnacl'
 import { formatUnits, parseUnits } from 'viem'
 import { Order, TradeHistory, TokenPair, OrderType, OrderStatus, DepositRequest } from '@/types'
-import { getTokenDecimals, parseTokenPair } from '@/lib/tokens'
+import { getDefaultSlippageBps, getTokenDecimals, parseTokenPair } from '@/lib/tokens'
 
 type UseOrdersOptions = {
   sessionSubname?: string
@@ -312,7 +312,14 @@ export function useOrders(options: UseOrdersOptions = {}) {
   }, [fetchOrders, walletConnected, sessionSubname])
 
   const submitOrder = useCallback(
-    async (data: { type: OrderType; pair: TokenPair; amount: number; price: number; ttlSeconds: number }) => {
+    async (data: {
+      type: OrderType
+      pair: TokenPair
+      amount: number
+      price: number
+      ttlSeconds: number
+      slippageBps: number
+    }) => {
       if (!walletConnected || !sessionSubname || sessionSubname === '—') {
         console.warn('[Orders] Wallet not connected; refusing to submit')
         return
@@ -337,6 +344,7 @@ export function useOrders(options: UseOrdersOptions = {}) {
           tokenOut,
           amount: amountWei,
           limitPrice,
+          slippageBps: Number.isFinite(data.slippageBps) ? data.slippageBps : getDefaultSlippageBps(),
           ttlSeconds: data.ttlSeconds,
           type: data.type,
           traderPublicKey,

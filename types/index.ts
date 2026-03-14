@@ -23,6 +23,7 @@ export type OrderPayload = {
   tokenOut: string;
   amount: string;
   limitPrice: string;
+  slippageBps?: number;
   ttlSeconds: number;
   type: OrderSide;
   traderPublicKey: string;

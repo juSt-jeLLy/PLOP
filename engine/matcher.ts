@@ -9,6 +9,21 @@ import { refundDeposit } from './settlement.js';
 import { createDoc, getDoc, listDocs, updateDoc, waitForSync } from './orders.js';
 
 const PAGE_LIMIT = 50;
+const DEFAULT_SLIPPAGE_BPS = Number(process.env.DEFAULT_SLIPPAGE_BPS || 200);
+
+function parseSlippageBps(order: DecryptedOrder): number {
+  const raw = (order as unknown as { slippageBps?: number | string }).slippageBps;
+  const num = typeof raw === 'string' ? Number(raw) : raw;
+  return Number.isFinite(num) && num >= 0 ? (num as number) : DEFAULT_SLIPPAGE_BPS;
+}
+
+function withinSlippage(order: DecryptedOrder, price: number): boolean {
+  const limit = Number.parseFloat(order.limitPrice);
+  if (!Number.isFinite(limit) || limit <= 0) return false;
+  const bps = parseSlippageBps(order);
+  const delta = limit * (bps / 10_000);
+  return price >= limit - delta && price <= limit + delta;
+}
 
 export async function fetchLiveOrders(): Promise<DecryptedOrder[]> {
   const liveOrders: DecryptedOrder[] = [];
@@ -98,6 +113,7 @@ export function findMatch(orders: DecryptedOrder[]): MatchResult | null {
 
       const priceA = Number.parseFloat(a.limitPrice);
       const priceB = Number.parseFloat(b.limitPrice);
+      if (!Number.isFinite(priceA) || !Number.isFinite(priceB)) continue;
       const priceOverlap = a.type === 'SELL' ? priceA <= priceB : priceB <= priceA;
       if (!priceOverlap) continue;
 
@@ -105,6 +121,9 @@ export function findMatch(orders: DecryptedOrder[]): MatchResult | null {
       const aLive = a.submittedAt + a.ttlSeconds * 1000 > now;
       const bLive = b.submittedAt + b.ttlSeconds * 1000 > now;
       if (!aLive || !bLive) continue;
+
+      const matchedPrice = (priceA + priceB) / 2;
+      if (!withinSlippage(a, matchedPrice) || !withinSlippage(b, matchedPrice)) continue;
 
       const aRemaining = BigInt(a.remainingAmount);
       const bRemaining = BigInt(b.remainingAmount);
@@ -114,7 +133,7 @@ export function findMatch(orders: DecryptedOrder[]): MatchResult | null {
         orderA: a,
         orderB: b,
         fillAmount,
-        matchedPrice: (priceA + priceB) / 2,
+        matchedPrice,
         aFullyFilled: fillAmount === aRemaining,
         bFullyFilled: fillAmount === bRemaining,
       };

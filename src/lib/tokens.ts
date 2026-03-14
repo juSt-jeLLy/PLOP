@@ -7,6 +7,7 @@ let cachedDecimals: TokenDecimalsMap | null = null
 let cachedAddresses: TokenAddressMap | null = null
 let cachedDemoPrices: DemoPriceMap | null = null
 let cachedDemoDefault: number | null = null
+let cachedSlippageBps: number | null = null
 
 function normalizeToken(symbol: string): string {
   return symbol.trim().toUpperCase()
@@ -145,4 +146,12 @@ export function getDemoPrice(pair: string): number | null {
   }
   const fallback = getDemoDefault()
   return Number.isFinite(fallback) ? fallback : null
+}
+
+export function getDefaultSlippageBps(): number {
+  if (cachedSlippageBps !== null) return cachedSlippageBps
+  const raw = (import.meta.env.VITE_DEFAULT_SLIPPAGE_BPS as string | undefined) || ''
+  const num = Number(raw)
+  cachedSlippageBps = Number.isFinite(num) && num >= 0 ? num : 200
+  return cachedSlippageBps
 }
