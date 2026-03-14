@@ -64,13 +64,14 @@ async function enqueueEnsWrite<T>(fn: () => Promise<T>): Promise<T> {
 async function waitForPendingNonceClear(timeoutMs = 180000): Promise<void> {
   const account = ensWalletClient.account?.address;
   if (!account) return;
+  const maxPending = Number(process.env.ENS_MAX_PENDING || 0);
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     const [latest, pending] = await Promise.all([
       ensPublicClient.getTransactionCount({ address: account, blockTag: 'latest' }),
       ensPublicClient.getTransactionCount({ address: account, blockTag: 'pending' }),
     ]);
-    if (pending <= latest) return;
+    if (pending <= latest + maxPending) return;
     await new Promise((resolve) => setTimeout(resolve, 5000));
   }
   throw new Error('[ENS] Pending transactions still in flight; wait for confirmations and retry');

@@ -1,6 +1,6 @@
 # PLOP — Full Flow Documentation
 Every operation, every sponsor, every doc link
-Everything runs on Ethereum Sepolia (chain ID 11155111). One chain. No bridges.
+ENS lives on Ethereum Sepolia (chain ID 11155111). BitGo testnet ETH (`hteth`) runs on Hoodi. Cross-chain by design.
 
 ## Before You Write a Single Line of Code
 Three accounts to create before the hackathon starts:
@@ -10,7 +10,8 @@ Three accounts to create before the hackathon starts:
 | ENS testnet | https://sepolia.app.ens.domains | Register plop.eth, point it at your resolver |
 | BitGo testnet | https://app.bitgo-test.com | Access token, wallet ID, passphrase |
 | Fileverse | https://ddocs.new | API key + server URL for encrypted doc storage |
-| Sepolia faucet | https://sepoliafaucet.com | Testnet ETH for deploying contracts + funding wallets |
+| Sepolia faucet | https://sepoliafaucet.com | Testnet ETH for deploying ENS contracts |
+| Hoodi faucet | (use your preferred Hoodi faucet) | Testnet ETH for Hoodi deposits/settlement |
 
 Do BitGo first — the 48-hour whitelist lock-in period on new policies means you need the wallet set up on Day 1. Note: during the hackathon demo window (first 48 hours) the whitelist policy is not yet enforced. This is fine — judges will read your setupBitgo.ts and see it's correctly configured. Mention it in your README as expected production behaviour.
 
@@ -25,7 +26,7 @@ Do BitGo first — the 48-hour whitelist lock-in period on new policies means yo
 |-------|-----------|-------------|
 | DarkPoolResolver.sol | Custom ENS resolver contract | Ethereum Sepolia |
 | Fileverse REST API | Encrypted order book | Off-chain REST + on-chain sync (chain-agnostic) |
-| BitGo MPC wallet | Settlement + policy enforcement | Ethereum Sepolia (teth) |
+| BitGo MPC wallet | Settlement + policy enforcement | Hoodi (hteth) |
 | Matching engine | Node.js process, runs off-chain | Your server / localhost |
 
 ---
@@ -191,7 +192,7 @@ export async function deleteDoc(ddocId: string): Promise<void> {
 ```
 
 ### 0.3 — Create BitGo MPC Wallet (BitGo)
-What you're doing: Creating a self-custody MPC hot wallet for teth (Ethereum Sepolia ETH) on BitGo testnet, then configuring 3 policy rules that enforce the dark pool's trust model.
+What you're doing: Creating a self-custody MPC hot wallet for hteth (Hoodi testnet ETH) on BitGo testnet, then configuring 3 policy rules that enforce the dark pool's trust model.
 
 The MPC key structure: You hold the user key (encrypted by your passphrase) + backup key. BitGo holds key 3. To move funds, you sign with user key + BitGo co-signs with key 3. BitGo's co-sign is gated by your policy rules — a policy violation = BitGo refuses to co-sign = transaction fails. No single party can move funds.
 
@@ -214,7 +215,7 @@ Doc links you need:
 | Environments | https://developers.bitgo.com/docs/get-started-environments | Confirms env: 'test' → app.bitgo-test.com. All testnet ops go here |
 | Wallet types overview | https://developers.bitgo.com/concepts/wallet-types | Explains MPC hot wallet — what you need. Self-custody, hot, simple withdrawal flow |
 | Create MPC keys | https://developers.bitgo.com/docs/wallets-create-mpc-keys | Correct MPC key creation flow — generateMPCKeys() pattern, not generateWallet() |
-| Create wallet | https://developers.bitgo.com/docs/wallets-create-wallets | Step 2: create wallet with the 3 MPC keys using wallets().add(). Use coin: 'teth' |
+| Create wallet | https://developers.bitgo.com/docs/wallets-create-wallets | Step 2: create wallet with the 3 MPC keys using wallets().add(). Use coin: 'hteth' |
 | Create whitelist policy | https://developers.bitgo.com/docs/wallets-whitelists-create | Create advancedWhitelist policy with action: { type: 'deny' } — blocks any send to non-whitelisted address |
 | Create velocity policy | https://developers.bitgo.com/docs/policies-create | Velocity limit — max outflow per rolling hour window |
 | Webhook setup | https://developers.bitgo.com/docs/webhooks-wallet | type: 'transfer' webhook — fires on deposit confirm (order goes live) and settlement confirm (trigger rotation) |
@@ -232,7 +233,7 @@ bitgo.register('teth', Teth.createInstance);
 bitgo.register('hteth', Hteth.createInstance);
 bitgo.authenticateWithAccessToken({ accessToken: process.env.BITGO_ACCESS_TOKEN! });
 
-const coin = bitgo.coin('teth');
+const coin = bitgo.coin('hteth');
 
 // Step 1: MPC key creation
 const bitgoKey = await coin.keychains().createBitGo({});
@@ -310,7 +311,7 @@ const node = namehash(normalize(subname)); // bytes32 — used in all contract c
 ### 1.2 — Create BitGo Deposit Address for This Session (BitGo)
 
 ```typescript
-const walletInstance = await bitgo.coin('teth').wallets().get({ 
+const walletInstance = await bitgo.coin('hteth').wallets().get({ 
   id: process.env.BITGO_WALLET_ID! 
 });
 
@@ -396,7 +397,7 @@ await waitForSync(ddocId); // wait for on-chain commit before marking order live
 ---
 
 ## PHASE 3 — Collateral Deposit
-Trigger: UI shows the trader their BitGo deposit address. Trader manually sends teth to that address.
+Trigger: UI shows the trader their BitGo deposit address. Trader manually sends hteth (Hoodi) to that address.
 
 ### 3.1 — BitGo Fires Deposit Webhook (BitGo)
 
@@ -420,6 +421,8 @@ app.post('/webhooks/bitgo', express.raw({ type: 'application/json' }), async (re
   res.status(200).send('ok');
 });
 ```
+
+> **Local Hoodi fallback:** if BitGo webhooks aren’t reachable in local testing, the engine can poll Hoodi balances and mark orders LIVE based on `depositAddress` + `originalAmount`.
 
 ### 3.2 — Activate Order in Fileverse (Fileverse)
 Find the ddocId by searching Fileverse for the deposit address, then update status to LIVE.
@@ -611,7 +614,7 @@ async function whitelistSettlementAddresses(
   addressA: string, 
   addressB: string
 ): Promise<void> {
-  const walletInstance = await bitgo.coin('teth').wallets()
+  const walletInstance = await bitgo.coin('hteth').wallets()
     .get({ id: process.env.BITGO_WALLET_ID! });
 
   // UPDATE the existing rule — append both addresses
@@ -695,7 +698,7 @@ try {
 ---
 
 ## PHASE 6 — Post-Settlement (Address Rotation + Receipt)
-Trigger: BitGo fires a transfer webhook when ALL settlement txs confirm on Ethereum Sepolia.
+Trigger: BitGo fires a transfer webhook when ALL settlement txs confirm on Hoodi.
 
 ### 6.1 — Rotate ENS Addresses — Fully Filled Sides Only (ENS)
 

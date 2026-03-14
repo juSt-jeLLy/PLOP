@@ -1,9 +1,10 @@
 import 'dotenv/config';
 import nacl from 'tweetnacl';
 import { createHmac, randomBytes } from 'node:crypto';
-import { createPublicClient, http } from 'viem';
+import { createPublicClient, createWalletClient, defineChain, http, parseEther } from 'viem';
 import { sepolia } from 'viem/chains';
 import { normalize } from 'viem/ens';
+import { privateKeyToAccount } from 'viem/accounts';
 
 function requireEnv(name) {
   const value = process.env[name];
@@ -17,6 +18,80 @@ function encodeBase64(value) {
 
 function decodeBase64(value) {
   return Uint8Array.from(Buffer.from(value, 'base64'));
+}
+
+function isTruthy(value) {
+  return ['1', 'true', 'yes'].includes((value || '').toLowerCase());
+}
+
+function shouldSimulateWebhook() {
+  if (isTruthy(process.env.SMOKE_SIMULATE_WEBHOOK)) return true;
+  if (isTruthy(process.env.SMOKE_FORCE_WEBHOOK)) return true; // backward compat
+  return false;
+}
+
+function getFundingKey() {
+  return process.env.HOODI_FUNDING_PRIVATE_KEY
+    || process.env.ENGINE_PRIVATE_KEY
+    || process.env.DEPLOYER_PRIVATE_KEY;
+}
+
+function getHoodiChain(rpcUrl) {
+  return defineChain({
+    id: 560048,
+    name: 'Hoodi',
+    nativeCurrency: { name: 'Hoodi ETH', symbol: 'ETH', decimals: 18 },
+    rpcUrls: { default: { http: [rpcUrl] } },
+    testnet: true,
+  });
+}
+
+async function sendDeposit(address, amountEth) {
+  const rpcUrl = requireEnv('ETH_HOODI_RPC');
+  const privateKey = getFundingKey();
+  if (!privateKey) {
+    throw new Error('[Config] Missing HOODI_FUNDING_PRIVATE_KEY or ENGINE_PRIVATE_KEY or DEPLOYER_PRIVATE_KEY');
+  }
+
+  const chain = getHoodiChain(rpcUrl);
+  const account = privateKeyToAccount(privateKey);
+  console.log('[Smoke] Hoodi funding wallet:', account.address);
+  const walletClient = createWalletClient({ account, chain, transport: http(rpcUrl) });
+  const publicClient = createPublicClient({ chain, transport: http(rpcUrl) });
+  const hash = await walletClient.sendTransaction({
+    to: address,
+    value: parseEther(amountEth),
+  });
+  await publicClient.waitForTransactionReceipt({ hash });
+  return hash;
+}
+
+async function simulateWebhookConfirm(engineUrl, depositAddress) {
+  const webhookPayload = {
+    type: 'transfer',
+    state: 'confirmed',
+    transfer: { state: 'confirmed', entries: [{ address: depositAddress }] },
+  };
+
+  const signed = signWebhookPayload(webhookPayload);
+  await fetchJson(`${engineUrl}/webhooks/bitgo`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(signed ? { 'x-signature-sha256': signed.signature } : {}),
+    },
+    body: signed ? signed.body : JSON.stringify(webhookPayload),
+  });
+}
+
+function requireSafeRecipient(useRealDeposit) {
+  if (!useRealDeposit) return;
+  if (process.env.ENGINE_TEST_RECIPIENT) return;
+  if (isTruthy(process.env.SMOKE_ALLOW_DERIVED_RECIPIENT)) {
+    console.warn('[Partial Smoke] ENGINE_TEST_RECIPIENT not set; settlement may go to derived ENS address.');
+    return;
+  }
+  throw new Error('[Partial Smoke] ENGINE_TEST_RECIPIENT not set. Set it or SMOKE_ALLOW_DERIVED_RECIPIENT=1 to proceed.');
 }
 
 function fileverseUrl(path, params = {}) {
@@ -184,6 +259,10 @@ async function findResidualOrder(parentId) {
 async function main() {
   const engineUrl = requireEnv('ENGINE_URL').replace(/\/+$/, '');
   const rpcUrl = requireEnv('ETH_SEPOLIA_RPC');
+  const useRealDeposit = isTruthy(process.env.SMOKE_REAL_DEPOSIT);
+  const depositAmountEth = process.env.SMOKE_DEPOSIT_ETH || '0.01';
+  const simulateWebhook = shouldSimulateWebhook();
+  requireSafeRecipient(useRealDeposit);
   const skipSync = ['1', 'true', 'yes'].includes((process.env.FILEVERSE_SKIP_SYNC || '').toLowerCase());
 
   console.log('[Partial Smoke] Engine health check...');
@@ -240,34 +319,39 @@ async function main() {
     limitPrice: '1',
   });
 
-  console.log('[Partial Smoke] Simulating BitGo webhook confirms...');
-  const webhookPayload = (address) => ({
-    type: 'transfer',
-    state: 'confirmed',
-    transfer: { state: 'confirmed', entries: [{ address }] },
-  });
+  if (useRealDeposit) {
+    console.log('[Partial Smoke] Sending real deposits on Hoodi...');
+    const txA = await sendDeposit(depositA, depositAmountEth);
+    const txB = await sendDeposit(depositB, depositAmountEth);
+    console.log('[Partial Smoke] Deposit tx hashes:', { txA, txB });
 
-  const payloadA = webhookPayload(depositA);
-  const signedA = signWebhookPayload(payloadA);
-  await fetchJson(`${engineUrl}/webhooks/bitgo`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(signedA ? { 'x-signature-sha256': signedA.signature } : {}),
-    },
-    body: signedA ? signedA.body : JSON.stringify(payloadA),
-  });
+    if (simulateWebhook) {
+      console.log('[Partial Smoke] Simulating webhooks (local engine detected)...');
+      await Promise.all([
+        simulateWebhookConfirm(engineUrl, depositA),
+        simulateWebhookConfirm(engineUrl, depositB),
+      ]);
+    }
 
-  const payloadB = webhookPayload(depositB);
-  const signedB = signWebhookPayload(payloadB);
-  await fetchJson(`${engineUrl}/webhooks/bitgo`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(signedB ? { 'x-signature-sha256': signedB.signature } : {}),
-    },
-    body: signedB ? signedB.body : JSON.stringify(payloadB),
-  });
+    console.log('[Partial Smoke] Waiting for orders to go LIVE...');
+    const liveStatuses = [
+      'LIVE',
+      'IN_SETTLEMENT',
+      'PARTIALLY_FILLED_IN_SETTLEMENT',
+      'MATCHED',
+      'PARTIALLY_FILLED',
+    ];
+    await Promise.all([
+      waitForStatus(orderA, liveStatuses),
+      waitForStatus(orderB, liveStatuses),
+    ]);
+  } else {
+    console.log('[Partial Smoke] Simulating BitGo webhook confirms...');
+    await Promise.all([
+      simulateWebhookConfirm(engineUrl, depositA),
+      simulateWebhookConfirm(engineUrl, depositB),
+    ]);
+  }
 
   console.log('[Partial Smoke] Waiting for settlement...');
   const [finalA, finalB] = await Promise.all([

@@ -70,40 +70,76 @@ async function getWalletInstance() {
 }
 
 export async function whitelistBothAddresses(addressA: string, addressB: string): Promise<void> {
+  const ruleId = requireEnv('WHITELIST_POLICY_ID');
+  const targets = Array.from(
+    new Set([addressA, addressB].map((address) => address.trim()))
+  );
+
   const wallet = await getWalletInstance();
-  const ruleId = process.env.WHITELIST_POLICY_ID || 'plop-destination-whitelist';
+  const updatePolicyRule = (wallet as { updatePolicyRule?: (params: unknown) => Promise<unknown> })
+    .updatePolicyRule;
+  const setPolicyRule = (wallet as { setPolicyRule?: (params: unknown) => Promise<unknown> })
+    .setPolicyRule;
 
-  try {
-    await wallet.setPolicyRule({
-      id: ruleId,
-      type: 'advancedWhitelist',
-      condition: { add: { type: 'address', item: addressA } },
-      action: { type: 'deny' },
-    });
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    if (!message.includes('already exists')) {
-      throw err;
+  if (typeof updatePolicyRule === 'function' || typeof setPolicyRule === 'function') {
+    for (const address of targets) {
+      const params = {
+        id: ruleId,
+        type: 'advancedWhitelist',
+        condition: { add: { type: 'address', item: address } },
+        action: { type: 'deny' },
+      };
+      try {
+        if (typeof updatePolicyRule === 'function') {
+          await updatePolicyRule.call(wallet, params);
+        } else if (typeof setPolicyRule === 'function') {
+          await setPolicyRule.call(wallet, params);
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        if (!message.toLowerCase().includes('already exists')) {
+          throw err;
+        }
+      }
     }
-  }
-
-  try {
-    await wallet.setPolicyRule({
-      id: ruleId,
-      type: 'advancedWhitelist',
-      condition: { add: { type: 'address', item: addressB } },
-      action: { type: 'deny' },
-    });
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    if (!message.includes('already exists')) {
-      throw err;
-    }
+  } else {
+    await updateWhitelistRuleViaApi(ruleId, targets);
   }
 
   const waitMs = Number(process.env.BITGO_WHITELIST_WAIT_MS || 2000);
   if (Number.isFinite(waitMs) && waitMs > 0) {
     await new Promise((resolve) => setTimeout(resolve, waitMs));
+  }
+}
+
+async function updateWhitelistRuleViaApi(ruleId: string, addresses: string[]): Promise<void> {
+  const accessToken = requireEnv('BITGO_ACCESS_TOKEN');
+  const walletId = requireEnv('BITGO_WALLET_ID');
+  const coinName = process.env.BITGO_WALLET_COIN || 'hteth';
+  const baseUrl = process.env.BITGO_BASE_URL || 'https://app.bitgo-test.com';
+  const headers = {
+    'Content-Type': 'application/json',
+    Authorization: `Bearer ${accessToken}`,
+  };
+
+  for (const address of addresses) {
+    const updateBody = {
+      id: ruleId,
+      type: 'advancedWhitelist',
+      condition: { add: { type: 'address', item: address } },
+      action: { type: 'deny' },
+    };
+    const updateRes = await fetch(`${baseUrl}/api/v2/${coinName}/wallet/${walletId}/policy/rule`, {
+      method: 'PUT',
+      headers,
+      body: JSON.stringify(updateBody),
+    });
+    if (!updateRes.ok) {
+      const body = await updateRes.text().catch(() => '');
+      if (!body.toLowerCase().includes('already exists')) {
+        throw new Error(`[BitGo] Failed to update whitelist (${updateRes.status}): ${body.slice(0, 200)}`);
+      }
+    }
   }
 }
 

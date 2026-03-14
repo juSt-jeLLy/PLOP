@@ -43,10 +43,72 @@ function extractTransferAddresses(payload: BitgoWebhookPayload): string[] {
   return Array.from(new Set(addresses.map(normalizeAddress)));
 }
 
+function extractTransferId(payload: BitgoWebhookPayload): string | null {
+  const transfer = (payload as Record<string, unknown>)?.transfer;
+  if (typeof transfer === 'string') return transfer;
+  if (transfer && typeof transfer === 'object') {
+    const id = (transfer as { id?: unknown }).id;
+    if (typeof id === 'string') return id;
+  }
+  return null;
+}
+
+function extractTransferHash(payload: BitgoWebhookPayload): string | null {
+  const hash = (payload as { hash?: unknown }).hash;
+  if (typeof hash === 'string') return hash;
+  const txid = (payload as { txid?: unknown }).txid;
+  if (typeof txid === 'string') return txid;
+  const transfer = (payload as Record<string, unknown>)?.transfer as Record<string, unknown> | undefined;
+  const transferHash = transfer?.hash ?? transfer?.txid ?? transfer?.txHash;
+  if (typeof transferHash === 'string') return transferHash;
+  return null;
+}
+
+async function fetchTransferEntries(transferId: string, walletId: string, coin: string): Promise<string[]> {
+  const accessToken = process.env.BITGO_ACCESS_TOKEN;
+  if (!accessToken) return [];
+  const baseUrl = process.env.BITGO_BASE_URL || 'https://app.bitgo-test.com';
+  const url = `${baseUrl}/api/v2/${coin}/wallet/${walletId}/transfer/${transferId}`;
+  const res = await fetch(url, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  if (!res.ok) {
+    console.warn('[Webhooks] BitGo transfer lookup failed', res.status);
+    return [];
+  }
+  const payload = await res.json().catch(() => null);
+  const entries = Array.isArray(payload?.entries) ? payload.entries : [];
+  const addresses = entries
+    .map((entry: { address?: unknown }) => (typeof entry.address === 'string' ? entry.address : null))
+    .filter((value): value is string => Boolean(value));
+  return Array.from(new Set(addresses.map(normalizeAddress)));
+}
+
+async function resolveTransferAddresses(payload: BitgoWebhookPayload): Promise<string[]> {
+  const direct = extractTransferAddresses(payload);
+  if (direct.length) return direct;
+
+  const transferId = extractTransferId(payload);
+  if (!transferId) return [];
+
+  const walletId = process.env.BITGO_WALLET_ID
+    || (typeof (payload as { wallet?: unknown }).wallet === 'string'
+      ? (payload as { wallet?: string }).wallet
+      : '');
+  if (!walletId) return [];
+
+  const coin = process.env.BITGO_WALLET_COIN
+    || (typeof (payload as { coin?: unknown }).coin === 'string'
+      ? String((payload as { coin?: string }).coin)
+      : 'hteth');
+
+  return fetchTransferEntries(transferId, walletId, coin);
+}
+
 function extractTransferIdentifiers(payload: BitgoWebhookPayload): string[] {
   const transfer = (payload as Record<string, unknown>)?.transfer as Record<string, unknown> | undefined;
   const candidates: Array<unknown> = [
-    transfer?.id,
+    extractTransferHash(payload),
     transfer?.txid,
     transfer?.txHash,
     transfer?.hash,
@@ -120,7 +182,17 @@ async function markOrdersLiveByDepositAddress(address: string): Promise<void> {
 }
 
 async function handleTransferConfirmed(payload: BitgoWebhookPayload): Promise<void> {
-  const addresses = extractTransferAddresses(payload);
+  const addresses = await resolveTransferAddresses(payload);
+  if (addresses.length === 0) {
+    const transferId = extractTransferId(payload);
+    const transferHash = extractTransferHash(payload);
+    console.warn('[Webhooks] No transfer addresses resolved', {
+      transferId,
+      transferHash,
+      type: payload?.type,
+      state: payload?.state ?? payload?.transfer?.state,
+    });
+  }
   for (const address of addresses) {
     await markOrdersLiveByDepositAddress(address);
   }
@@ -186,9 +258,16 @@ export function createBitgoWebhookHandler() {
     const signature = getSignatureHeader(req);
     const rawBody = req.rawBody ?? JSON.stringify(req.body ?? {});
 
+    if (secret && !signature) {
+      console.warn('[Webhooks] Signature header missing; check BitGo webhook config');
+      res.status(401).json({ error: 'Missing signature' });
+      return;
+    }
+
     if (secret && signature) {
       const ok = verifyBitgoSignature(rawBody, signature, secret);
       if (!ok) {
+        console.warn('[Webhooks] Invalid signature; check BITGO_WEBHOOK_SECRET');
         res.status(401).json({ error: 'Invalid signature' });
         return;
       }
