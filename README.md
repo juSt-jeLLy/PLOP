@@ -52,6 +52,7 @@ graph TD
   subgraph "Off-chain"
     UI["Frontend (Vite + React)"]
     ENG["Engine (Node)"]
+    APP["Approver (auto-approval)"]
     FV["Fileverse REST API"]
   end
 
@@ -65,6 +66,7 @@ graph TD
   SC -->|"recordSettlement → text"| DPR
   ENG -->|"create / list / update ddocs"| FV
   ENG -->|"deposit watch + settlement"| BG
+  APP -->|"approve pending txs"| BG
   ENG -->|" /orders, /session "| UI
 ```
 
@@ -109,11 +111,16 @@ graph TD
    - ETH pairs: `sendMany()` (atomic).
    - ERC-20 pairs: two `send()` calls (not atomic).
 
-7. Session lifecycle and receipts
+7. Approvals (Option 3 auto-approver)
+   - BitGo creates a pending approval for each settlement/refund.
+   - The **approver service** validates the recipient + amount against the encrypted order payload and only then approves.
+   - If the approval does not match the expected recipient/amount, it is rejected or skipped.
+
+8. Session lifecycle and receipts
    - On settlement confirm, engine writes encrypted receipts to Fileverse and updates `plop.receipts`.
    - `plop.active` is set to `false` only when **no active orders remain** for that subname.
 
-8. Refunds
+9. Refunds
    - Cancelled or expired orders are refunded via BitGo.
    - If deposit arrives after cancellation, refund watcher sends funds back.
 
@@ -127,6 +134,7 @@ sequenceDiagram
   participant ENS as ENS (Sepolia)
   participant FV as Fileverse
   participant BG as BitGo (Hoodi)
+  participant APP as Approver
 
   U->>UI: Connect wallet
   UI->>ENG: POST /session
@@ -145,6 +153,8 @@ sequenceDiagram
 
   ENG->>FV: poll + match
   ENG->>BG: whitelist + send settlement
+  BG->>APP: pending approval
+  APP->>BG: approve if expected
   BG->>ENG: settlement webhook
   ENG->>FV: write receipts
   ENG->>ENS: setText(plop.active=false) when no active orders remain
@@ -185,13 +195,16 @@ BitGo webhooks mark orders LIVE on confirmed deposits. A Hoodi deposit watcher i
 The engine polls Fileverse with `listDocs()` pagination, decrypts LIVE orders, checks TTL based on **root** `submittedAt`, and matches inverse pairs with price overlap. Partial fills update the root order to `PARTIALLY_FILLED_IN_SETTLEMENT` and create a residual ddoc that reuses the same encrypted order and original `submittedAt`.
 
 11. Settlement execution  
-The engine reads explicit settlement recipients from `plop.settlement` (no ENS address fallback), updates the whitelist, and settles with BitGo. ETH pairs use `sendMany()` (atomic). ERC‑20 pairs use two sequential `send()` calls (non‑atomic). Failed sends are not retried to avoid double‑spend risk.
+   The engine reads explicit settlement recipients from `plop.settlement` (no ENS address fallback), updates the whitelist, and settles with BitGo. ETH pairs use `sendMany()` (atomic). ERC‑20 pairs use two sequential `send()` calls (non‑atomic). Failed sends are not retried to avoid double‑spend risk.
 
-12. Session lifecycle + receipts  
-After settlement confirmation, encrypted receipts are written to Fileverse and appended to `plop.receipts` in ENS. The engine sets `plop.active=false` **only when no active orders remain** for that subname.
+12. Approvals (Option 3 auto-approver)  
+    BitGo creates pending approvals for settlement/refund transfers. The approver daemon polls pending approvals and approves only when the recipient + amount exactly match the encrypted order payload (using `ENGINE_SECRET_KEY`). This removes manual approvals while ensuring the engine cannot redirect funds.
 
-13. Refunds  
-Cancelled or expired orders are refunded via BitGo. If a deposit arrives after cancellation/expiry, the refund watcher sends it back automatically. Refund metadata (`refundTxHash`, timestamps, error) is persisted and shown in history.
+13. Session lifecycle + receipts  
+    After settlement confirmation, encrypted receipts are written to Fileverse and appended to `plop.receipts` in ENS. The engine sets `plop.active=false` **only when no active orders remain** for that subname.
+
+14. Refunds  
+    Cancelled or expired orders are refunded via BitGo. If a deposit arrives after cancellation/expiry, the refund watcher sends it back automatically. Refund metadata (`refundTxHash`, timestamps, error) is persisted and shown in history.
 
 Critical gotchas from the build docs: settlement recipients are required (no ENS address fallback); never use `@fileverse/agents`; `sendMany()` is native ETH only; always update (not create) the whitelist rule; only deactivate a subname when **all** orders are done; and never retry failed ERC‑20 sends.
 
@@ -254,6 +267,7 @@ BitGo `sendMany()` works only for native ETH. ERC-20 pairs are settled with two 
 - ENS: wildcard resolver on Sepolia
 - Storage: Fileverse REST API (ddocs)
 - Settlement: BitGo MPC hot wallet on Hoodi (hteth)
+- Approvals: BitGo auto-approver daemon (optional)
 
 ## Quick start (local)
 
@@ -264,6 +278,7 @@ Typical dev commands:
 ```bash
 npm install
 npm run engine
+npm run approver
 npm run dev
 ```
 
@@ -281,6 +296,16 @@ Engine:
 - `FILEVERSE_SERVER_URL`
 - `FILEVERSE_API_KEY`
 - `ENGINE_URL`
+
+Approver (optional, auto-approval):
+
+- `BITGO_ACCESS_TOKEN` (or `APPROVER_BITGO_ACCESS_TOKEN`)
+- `BITGO_WALLET_ID`
+- `BITGO_WALLET_PASSPHRASE` (or `APPROVER_WALLET_PASSPHRASE`)
+- `BITGO_ENTERPRISE_ID` (fallback if walletId is rejected by BitGo pending approvals)
+- `ENGINE_SECRET_KEY`
+- `APPROVER_POLL_INTERVAL_MS` (default 15000)
+- `APPROVER_REJECT_ON_FAIL` (set `0` to skip instead of reject)
 
 Frontend:
 
