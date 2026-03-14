@@ -1,6 +1,6 @@
 # PLOP - Rotating Dark Pool
 
-Tagline: privacy-first OTC liquidity with rotating ENS identities and MPC settlement.
+Privacy-first OTC liquidity with rotating ENS identities and MPC settlement.
 
 PLOP is a privacy-preserving OTC dark pool that combines ENS session identities on Sepolia, encrypted off-chain order storage on Fileverse, and BitGo MPC settlement on Hoodi. Orders are hidden until matched, deposits are confirmed via BitGo, and settlement happens on-chain with policy controls.
 
