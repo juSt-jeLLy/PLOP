@@ -19,8 +19,8 @@ Ethereum Sepolia (chain ID 11155111)
   ├── ENS Universal Resolver→ 0xeEeEEEeE14D718C2B47D9923Deab1335E144EeEe
   └── DarkPoolResolver.sol  → deployed by you (custom wildcard resolver)
 
-Ethereum Sepolia (chain ID 11155111)
-  └── BitGo MPC wallet      → coin: 'teth', env: 'test', app.bitgo-test.com
+Hoodi (chain ID 560048)
+  └── BitGo MPC wallet      → coin: 'hteth', env: 'test', app.bitgo-test.com
 
 Fileverse (off-chain REST API — chain-agnostic)
   └── Order ddocs           → REST API against your deployed Fileverse server
@@ -29,10 +29,10 @@ Fileverse (off-chain REST API — chain-agnostic)
                               Native listDocs() pagination — no local index file
 ```
 
-**Why one chain for ENS + BitGo:**
-- ENS only exists on Ethereum — the registry is Ethereum-native, non-negotiable
-- BitGo supports `teth` (Ethereum Sepolia) as a first-class coin
-- Fileverse is accessed via REST API — it is chain-agnostic from the engine's perspective
+**Why cross-chain (ENS on Sepolia, funds on Hoodi):**
+- ENS only exists on Ethereum — registry + resolver are Sepolia-native
+- BitGo testnet ETH now maps to **Hoodi** (`hteth` coin code)
+- Fileverse is REST/chain-agnostic, so metadata can live off-chain while settlement is on Hoodi
 
 **Never use:**
 - `@fileverse/agents` npm SDK — the hackathon API is REST, not the agents SDK
@@ -63,7 +63,7 @@ plop/
 │
 ├── scripts/
 │   ├── deployResolver.ts         # Deploy DarkPoolResolver.sol to Ethereum Sepolia
-│   └── setupBitgo.ts             # Create teth wallet + 3 policy rules on Ethereum Sepolia
+│   └── setupBitgo.ts             # Create hteth wallet + 3 policy rules on Hoodi (BitGo testnet)
 │                                 # No setupFileverse.ts — Fileverse setup done via ddocs.new UI
 │
 ├── test/
@@ -92,12 +92,17 @@ DEPLOYER_PRIVATE_KEY=0x...              # engine's signing wallet on Sepolia
 FILEVERSE_API_KEY=...                  # from Settings → Developer Mode → Your API Keys
 FILEVERSE_SERVER_URL=https://...       # your deployed Fileverse server URL (from ddocs.new deploy)
 
-# Ethereum Sepolia — BitGo
+# Hoodi — BitGo (testnet ETH via hteth)
 BITGO_ENV=test                         # always 'test' for hackathon
 BITGO_ACCESS_TOKEN=...                 # from app.bitgo-test.com
 BITGO_WALLET_ID=...
 BITGO_WALLET_PASSPHRASE=...
 BITGO_WEBHOOK_SECRET=...               # for webhook signature verification
+BITGO_WALLET_COIN=hteth                # BitGo testnet ETH coin code (Hoodi)
+
+# Hoodi RPC (for deposit watcher + smoke deposits)
+ETH_HOODI_RPC=https://...              # Hoodi RPC
+HOODI_CHAIN_ID=560048                  # Hoodi chain id
 
 # Engine
 ENGINE_PORT=3001
@@ -116,7 +121,7 @@ AUDIT_WEBHOOK_POLICY_ID=...            # BitGo policy ID for audit webhook
 ## Smart Contract Rules — `DarkPoolResolver.sol`
 
 ### Deploy ONLY to Ethereum Sepolia
-Never deploy to Gnosis or any other chain. Everything is on Ethereum Sepolia. The ENS registry on Sepolia is what this contract registers with.
+Never deploy to Gnosis or any other chain. ENS lives on Sepolia and this resolver must be deployed there.
 
 ### Must implement ENSIP-10 exactly
 ```solidity
@@ -470,7 +475,7 @@ export async function settleErc20Pair(
 2. whitelistBothAddresses()   — UPDATE existing whitelist policy with both session addresses
 3. ~2s wait                   — allow policy to go ACTIVE (only if no approval requirement)
 4. execute send(s)            — sendMany for ETH-only pairs, two send() for ERC-20 pairs
-5. await BitGo webhook        — wait for all tx confirmations on Ethereum Sepolia
+5. await BitGo webhook        — wait for all tx confirmations on Hoodi
 6. rotateIfFullyFilled()      — rotate ENS node for fully-filled parties only
 7. finalizeSettledOrders()    — mark settled ddocs MATCHED or PARTIALLY_FILLED in Fileverse
 8. writeReceipt() x2          — write encrypted settlement receipt ddocs for both parties
@@ -831,7 +836,7 @@ Step 2: Fileverse setup (manual — no script)
   → Verify: curl $FILEVERSE_SERVER_URL/ping → {"reply":"pong"}
 
 Step 3: scripts/setupBitgo.ts
-  → Creates teth MPC wallet on Ethereum Sepolia at app.bitgo-test.com
+  → Creates hteth MPC wallet on Hoodi at app.bitgo-test.com
   → Creates 3 policy rules (whitelist, velocity, audit webhook)
   → CRITICAL: configure the whitelist rule with NO approval requirement so updates auto-activate
   → Registers webhook pointing to engine URL /webhooks/bitgo
@@ -841,7 +846,7 @@ Step 4: engine/index.ts (npm run engine)
   → Calls fetchLiveOrders() on startup — paginates listDocs() to rebuild order book from Fileverse
   → Skips any orders in IN_SETTLEMENT / PARTIALLY_FILLED_IN_SETTLEMENT — log for manual review
   → Verifies Fileverse server reachable (GET /ping)
-  → Verifies BitGo wallet balance on Ethereum Sepolia
+  → Verifies BitGo wallet balance on Hoodi
   → Starts 15s polling loop
   → Starts Express webhook server on ENGINE_PORT
 ```

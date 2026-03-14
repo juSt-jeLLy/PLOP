@@ -17,6 +17,7 @@ import {
   resolveSessionAddress,
   setSessionMetadata,
 } from './session.js';
+import { startHoodiDepositWatcher } from './hoodi.js';
 import { createBitgoWebhookHandler } from './webhooks.js';
 import { getDoc, updateDoc } from './orders.js';
 
@@ -220,4 +221,5 @@ app.listen(PORT, () => {
       console.error('[Engine] Matching cycle failed:', err);
     });
   }, POLL_INTERVAL_MS);
+  startHoodiDepositWatcher();
 });

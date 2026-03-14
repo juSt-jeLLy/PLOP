@@ -4,8 +4,8 @@ Privacy-preserving institutional OTC
 Three sponsor primitives, one novel stack:
 * ENS auto-rotating addresses → Ethereum Sepolia
 * Fileverse encrypted order matching → REST API (chain-agnostic storage)
-* BitGo OTC settlement + policy → Ethereum Sepolia (teth testnet coin)
-The gap nobody has filled: ENS's own docs mention "auto-rotating addresses on each name resolution for privacy" — nobody has BUILT this. PLOP builds it, with institutional settlement on Sepolia.
+* BitGo OTC settlement + policy → Hoodi (hteth testnet coin)
+The gap nobody has filled: ENS's own docs mention "auto-rotating addresses on each name resolution for privacy" — nobody has BUILT this. PLOP builds it, with institutional settlement on Hoodi.
 
 ## What It Does
 Institutions need to execute large trades without telegraphing their position to the market. PLOP builds a dark pool where:
@@ -14,7 +14,7 @@ Institutions need to execute large trades without telegraphing their position to
 * When a match is found, a BitGo MPC wallet handles settlement between both parties with policy rules preventing front-running
 * **Partial fills supported** — a 100 ETH order can match against multiple smaller orders; the unfilled remainder re-enters the book automatically as a residual order
 * The "order book" is a set of encrypted Fileverse ddocs, each identified by a `ddocId`
-* Matching is done off-chain, settlement on-chain through BitGo on Ethereum Sepolia
+* Matching is done off-chain, settlement on-chain through BitGo on Hoodi
 * No public mempool leakage
 
 The novel mechanic: ENS auto-rotation is the privacy primitive — literally mentioned in ENS's prize brief as something they want to see built. Fileverse is the encrypted order book. BitGo is the settlement layer institutions already trust. This is the only idea that hits ENS's most specific prize hint verbatim.
@@ -27,8 +27,8 @@ Ethereum Sepolia (chain ID 11155111)
   ├── DarkPoolResolver.sol → deployed by you (custom wildcard resolver)
   └── Fileverse on-chain sync → content hashes committed on-chain via Fileverse server
 
-Ethereum Sepolia (chain ID 11155111)
-  └── BitGo MPC wallet     → teth coin on app.bitgo-test.com
+Hoodi (chain ID 560048)
+  └── BitGo MPC wallet     → hteth coin on app.bitgo-test.com
       ├── wallet.createAddress() → deposit addresses per session
       ├── sendMany()             → atomic ETH settlement (ETH-only pairs)
       ├── send() × 2            → two sequential sends per ERC-20 settlement
@@ -42,11 +42,11 @@ Off-chain REST API (chain-agnostic)
 **Fileverse is a REST API — not the @fileverse/agents npm SDK.**
 Do not install `@fileverse/agents`. Do not use Pimlico, Pinata, or any wallet private key for Fileverse. All calls use plain `fetch()` with `FILEVERSE_API_KEY` and `FILEVERSE_SERVER_URL`. The API has native `GET /api/ddocs` pagination so no local `data/active-orders.json` index is needed.
 
-Why one chain for ENS + BitGo:
-* ENS only exists on Ethereum (Mainnet/Sepolia) — this is non-negotiable, the ENS registry is Ethereum-native and always will be
-* Fileverse is accessed via REST API — it is chain-agnostic from the engine's perspective; content hashes sync on-chain through Fileverse's own server
-* BitGo supports teth (Ethereum Sepolia) as a first-class coin — confirmed from BitGo coin listings
-* Everything on Ethereum Sepolia — ENS, Fileverse on-chain sync, and BitGo settlement all on the same chain. No cross-chain complexity, no bridge UX, simpler demo.
+Why cross-chain (ENS on Sepolia, funds on Hoodi):
+* ENS only exists on Ethereum (Mainnet/Sepolia) — the registry is Ethereum-native
+* Fileverse is accessed via REST API — it is chain-agnostic from the engine's perspective
+* BitGo testnet ETH now maps to **Hoodi** under the `hteth` coin code
+* ENS identity stays on Sepolia while settlement happens on Hoodi
 
 > **⚠️ ERC-20 settlement uses two sequential sends, not sendMany.**
 > BitGo's `sendMany()` only supports native ETH recipients. For any token pair involving ERC-20s (USDC, WBTC, etc.), settlement uses two sequential `send()` calls — one to the buyer, one to the seller. This means settlement is **not atomic** for ERC-20 pairs: if the second send fails after the first succeeds, manual intervention is required. For the hackathon demo this is acceptable. Atomic ERC-20 settlement (via an escrow contract) is a roadmap item. See the BitGo section for the exact implementation.
@@ -86,7 +86,7 @@ One resolver contract on Sepolia handles every *.plop.eth subname that will ever
 ```
 plop.pairs   = "ETH/USDC,WBTC/USDC"
 plop.active  = "true"
-plop.deposit = "0x4a3f..."  // BitGo Ethereum Sepolia deposit address
+plop.deposit = "0x4a3f..."  // BitGo Hoodi deposit address
 plop.receipts = "ddocId1,ddocId2"  // comma-separated Fileverse ddocIds
 ```
 
@@ -119,9 +119,9 @@ What Fileverse handles in PLOP:
 > **⚠️ Only one active API key at a time.** Rotating it immediately invalidates the old key — all engine processes using the old key will fail.
 
 ## BitGo — Deep Technical Breakdown
-✅ FULLY POSSIBLE on Ethereum Sepolia (teth)
+✅ FULLY POSSIBLE on Hoodi (hteth)
 
-BitGo supports teth (Ethereum Sepolia testnet ETH) as a first-class coin. Self-custody MPC hot wallets work on testnet. The policy engine enforces whitelisted addresses only — the anti-front-running control. Webhooks fire when settlement confirms on Ethereum Sepolia.
+BitGo testnet ETH uses the `hteth` coin code and runs on **Hoodi**. Self-custody MPC hot wallets work on testnet. The policy engine enforces whitelisted addresses only — the anti-front-running control. Webhooks fire when settlement confirms on Hoodi.
 
 MPC key structure: You hold user key + backup key. BitGo holds key 3 and co-signs. BitGo's co-sign is gated by your policy rules — if a policy rule blocks the transaction, BitGo refuses to co-sign and the send fails.
 
@@ -141,21 +141,21 @@ MPC key structure: You hold user key + backup key. BitGo holds key 3 and co-sign
 
 **Step 1 — Anonymous session identity (ENS on Ethereum Sepolia)**
 
-Trader connects wallet. Your app generates a throwaway subname — x7k2m.plop.eth — resolved by your custom wildcard DarkPoolResolver.sol on Ethereum Sepolia. The resolver computes a fresh derived address from keccak256(node, nonce, epoch). ENS text record stores: accepted pairs, active status, and the BitGo Ethereum Sepolia deposit address.
+Trader connects wallet. Your app generates a throwaway subname — x7k2m.plop.eth — resolved by your custom wildcard DarkPoolResolver.sol on Ethereum Sepolia. The resolver computes a fresh derived address from keccak256(node, nonce, epoch). ENS text record stores: accepted pairs, active status, and the BitGo Hoodi deposit address.
 
 **Step 2 — Encrypted order submission (Fileverse REST API)**
 
 Trader fills order: sell token, buy token, amount, minimum acceptable price, TTL. Frontend encrypts this JSON client-side using NaCl box — only the matching engine can decrypt. The encrypted payload is stored as a Fileverse ddoc via `POST /api/ddocs`. After `waitForSync()`, the content hash is committed on-chain. The `ddocId` is the order's permanent reference. No local index file — the engine paginates `GET /api/ddocs` to enumerate orders.
 
-**Step 3 — Collateral deposit into BitGo MPC wallet (BitGo on Ethereum Sepolia)**
+**Step 3 — Collateral deposit into BitGo MPC wallet (BitGo on Hoodi)**
 
-Trader deposits the exact sell amount into a BitGo self-custody MPC hot wallet address on Ethereum Sepolia. This address was generated via `wallet.createAddress()` and stored in the ENS text record `plop.deposit`. BitGo fires a webhook when the deposit confirms. Only then does the order status update to LIVE in Fileverse.
+Trader deposits the exact sell amount into a BitGo self-custody MPC hot wallet address on Hoodi. This address was generated via `wallet.createAddress()` and stored in the ENS text record `plop.deposit`. BitGo fires a webhook when the deposit confirms. Only then does the order status update to LIVE in Fileverse.
 
 **Step 4 — Off-chain matching (Node.js Engine)**
 
 Polling loop every 15 seconds: `GET /api/ddocs` (paginated) to fetch all ddocs, filter for status LIVE, decrypt each with engine secret key. Matching logic: inverse token pairs + price overlap + TTL not elapsed. Fill amount = min(remainingA, remainingB). Partial fills supported.
 
-**Step 5 — Settlement via BitGo (BitGo on Ethereum Sepolia)**
+**Step 5 — Settlement via BitGo (BitGo on Hoodi)**
 
 Engine calls `applyPartialFill()` first (updates Fileverse, creates residual ddocs). Then `updatePolicyRule()` to JIT-whitelist both session addresses. Then `sendMany()` for ETH-only pairs (atomic) or two sequential `send()` calls for ERC-20 pairs (not atomic).
 
@@ -194,13 +194,13 @@ Encrypted receipt ddoc created for each party via `POST /api/ddocs`: tx hashes, 
 | https://docs.fileverse.io/0x2d133a10443a13957278e7dfeefbfee826c82fd8/117 | Full REST API guide — setup, create/read/update/list/delete/search ddocs |
 | https://ddocs.new | Web UI — manage documents, check sync status, verify on-chain links |
 
-### 🟢 BitGo (Ethereum Sepolia — teth coin, app.bitgo-test.com)
+### 🟢 BitGo (Hoodi — hteth coin, app.bitgo-test.com)
 
 | Link | Purpose |
 |------|---------|
 | https://developers.bitgo.com/docs/get-started-sdk-install | Install + auth for testnet |
 | https://developers.bitgo.com/docs/wallets-create-mpc-keys | Create MPC key set — use this, NOT generateWallet() |
-| https://developers.bitgo.com/docs/wallets-create-wallets | Create wallet with wallets().add() for teth |
+| https://developers.bitgo.com/docs/wallets-create-wallets | Create wallet with wallets().add() for hteth |
 | https://developers.bitgo.com/docs/wallets-create-addresses | wallet.createAddress() — fresh deposit address per session |
 | https://developers.bitgo.com/docs/policies-create | Create the 3 policy rules |
 | https://developers.bitgo.com/docs/wallets-whitelists-update | updatePolicyRule() — JIT whitelist at match time |
@@ -222,5 +222,5 @@ Encrypted receipt ddoc created for each party via `POST /api/ddocs`: tx hashes, 
 | docs.ens.domains/resolvers/writing/ | Writing DarkPoolResolver.sol |
 | docs.ens.domains/ensip/10/ | Implementing resolve() for wildcard subnames |
 | docs.fileverse.io/.../117 | Every Fileverse REST call — createDoc, listDocs, updateDoc |
-| developers.bitgo.com/docs/wallets-create-mpc-keys | Setting up the teth MPC wallet |
+| developers.bitgo.com/docs/wallets-create-mpc-keys | Setting up the hteth MPC wallet |
 | developers.bitgo.com/docs/wallets-whitelists-update | JIT whitelist updates at settlement time |

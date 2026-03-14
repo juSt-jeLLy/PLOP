@@ -126,7 +126,11 @@ export async function fetchLiveOrders(): Promise<DecryptedOrder[]> {
         continue;
       }
 
-      liveOrders.push(toDecryptedOrder(stored));
+      try {
+        liveOrders.push(toDecryptedOrder(stored));
+      } catch (err) {
+        console.warn(`[Matcher] Failed to decrypt order ${stored.ddocId}; skipping`, err);
+      }
     }
 
     if (!hasNext) break;

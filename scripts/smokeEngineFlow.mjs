@@ -1,9 +1,10 @@
 import 'dotenv/config';
 import { createHmac } from 'node:crypto';
 import nacl from 'tweetnacl';
-import { createPublicClient, http } from 'viem';
+import { createPublicClient, createWalletClient, defineChain, http, parseEther } from 'viem';
 import { sepolia } from 'viem/chains';
 import { normalize } from 'viem/ens';
+import { privateKeyToAccount } from 'viem/accounts';
 
 function requireEnv(name) {
   const value = process.env[name];
@@ -17,6 +18,77 @@ function encodeBase64(value) {
 
 function decodeBase64(value) {
   return Uint8Array.from(Buffer.from(value, 'base64'));
+}
+
+function isTruthy(value) {
+  return ['1', 'true', 'yes'].includes((value || '').toLowerCase());
+}
+
+function shouldSimulateWebhook() {
+  if (isTruthy(process.env.SMOKE_SIMULATE_WEBHOOK)) return true;
+  if (isTruthy(process.env.SMOKE_FORCE_WEBHOOK)) return true; // backward compat
+  return false;
+}
+
+function getFundingKey() {
+  return process.env.HOODI_FUNDING_PRIVATE_KEY
+    || process.env.ENGINE_PRIVATE_KEY
+    || process.env.DEPLOYER_PRIVATE_KEY;
+}
+
+function getHoodiChain(rpcUrl) {
+  return defineChain({
+    id: 560048,
+    name: 'Hoodi',
+    nativeCurrency: { name: 'Hoodi ETH', symbol: 'ETH', decimals: 18 },
+    rpcUrls: { default: { http: [rpcUrl] } },
+    testnet: true,
+  });
+}
+
+async function sendDeposit(address, amountEth) {
+  const rpcUrl = requireEnv('ETH_HOODI_RPC');
+  const privateKey = getFundingKey();
+  if (!privateKey) {
+    throw new Error('[Config] Missing HOODI_FUNDING_PRIVATE_KEY or ENGINE_PRIVATE_KEY or DEPLOYER_PRIVATE_KEY');
+  }
+
+  const chain = getHoodiChain(rpcUrl);
+  const account = privateKeyToAccount(privateKey);
+  console.log('[Smoke] Hoodi funding wallet:', account.address);
+  const walletClient = createWalletClient({ account, chain, transport: http(rpcUrl) });
+  const publicClient = createPublicClient({ chain, transport: http(rpcUrl) });
+  const hash = await walletClient.sendTransaction({
+    to: address,
+    value: parseEther(amountEth),
+  });
+  await publicClient.waitForTransactionReceipt({ hash });
+  return hash;
+}
+
+async function simulateWebhookConfirm(engineUrl, depositAddress) {
+  const webhookPayload = {
+    type: 'transfer',
+    state: 'confirmed',
+    transfer: {
+      state: 'confirmed',
+      entries: [{ address: depositAddress }],
+    },
+  };
+
+  const secret = process.env.BITGO_WEBHOOK_SECRET;
+  const rawBody = JSON.stringify(webhookPayload);
+  const headers = { 'Content-Type': 'application/json' };
+  if (secret) {
+    const digest = createHmac('sha256', secret).update(rawBody).digest('hex');
+    headers['x-signature'] = `sha256=${digest}`;
+  }
+
+  await fetchJson(`${engineUrl}/webhooks/bitgo`, {
+    method: 'POST',
+    headers,
+    body: rawBody,
+  });
 }
 
 function fileverseUrl(path, params = {}) {
@@ -51,6 +123,9 @@ async function main() {
   const engineUrl = requireEnv('ENGINE_URL').replace(/\/+$/, '');
   const enginePublicKeyB64 = requireEnv('ENGINE_PUBLIC_KEY');
   const engineAddress = requireEnv('ENGINE_ADDRESS');
+  const useRealDeposit = isTruthy(process.env.SMOKE_REAL_DEPOSIT);
+  const depositAmountEth = process.env.SMOKE_DEPOSIT_ETH || '0.01';
+  const simulateWebhook = shouldSimulateWebhook();
 
   console.log('[Smoke] Engine health check...');
   const health = await fetchJson(`${engineUrl}/health`);
@@ -130,43 +205,41 @@ async function main() {
   if (!ddocId) throw new Error('[Smoke] Fileverse createDoc failed');
   console.log('[Smoke] Order created:', ddocId);
 
-  console.log('[Smoke] Simulating BitGo webhook confirm...');
-  const webhookPayload = {
-    type: 'transfer',
-    state: 'confirmed',
-    transfer: {
-      state: 'confirmed',
-      entries: [{ address: depositAddress }],
-    },
-  };
-
-  const secret = process.env.BITGO_WEBHOOK_SECRET;
-  const rawBody = JSON.stringify(webhookPayload);
-  const headers = { 'Content-Type': 'application/json' };
-  if (secret) {
-    const digest = createHmac('sha256', secret).update(rawBody).digest('hex');
-    headers['x-signature'] = `sha256=${digest}`;
+  if (useRealDeposit) {
+    console.log('[Smoke] Sending real deposit on Hoodi...');
+    const txHash = await sendDeposit(depositAddress, depositAmountEth);
+    console.log('[Smoke] Deposit tx hash:', txHash);
+    if (simulateWebhook) {
+      console.log('[Smoke] Simulating webhook (local engine detected)...');
+      await simulateWebhookConfirm(engineUrl, depositAddress);
+    }
+  } else {
+    console.log('[Smoke] Simulating BitGo webhook confirm...');
+    await simulateWebhookConfirm(engineUrl, depositAddress);
   }
 
-  await fetchJson(`${engineUrl}/webhooks/bitgo`, {
-    method: 'POST',
-    headers,
-    body: rawBody,
-  });
-
   let status = null;
-  for (let attempt = 0; attempt < 5; attempt += 1) {
+  const liveStatuses = new Set([
+    'LIVE',
+    'IN_SETTLEMENT',
+    'PARTIALLY_FILLED_IN_SETTLEMENT',
+    'MATCHED',
+    'PARTIALLY_FILLED',
+  ]);
+  const maxAttempts = useRealDeposit ? 60 : 5;
+  const sleepMs = useRealDeposit ? 5000 : 2000;
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
     const doc = await getDoc(ddocId);
     if (doc?.content) {
       const parsed = JSON.parse(doc.content);
       status = parsed?.status;
-      if (status === 'LIVE') break;
+      if (liveStatuses.has(status)) break;
     }
-    await new Promise((resolve) => setTimeout(resolve, 2000));
+    await new Promise((resolve) => setTimeout(resolve, sleepMs));
   }
 
-  if (status !== 'LIVE') {
-    throw new Error('[Smoke] Order did not transition to LIVE after webhook');
+  if (!liveStatuses.has(status)) {
+    throw new Error('[Smoke] Order did not transition to LIVE after deposit/webhook');
   }
   console.log('[Smoke] Order status is LIVE');
 
