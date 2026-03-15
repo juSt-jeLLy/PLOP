@@ -39,6 +39,18 @@ See detailed build steps in [SETUP.MD](SETUP.MD) and full design notes in [DESCR
 - End-to-end flow works today with real testnet deposits and BitGo MPC settlement.
 - Privacy is preserved without custom L2s or opaque relayers.
 
+## What we actually built (core features)
+
+- **Private orderbook:** Orders are encrypted on the client and stored as Fileverse ddocs; no plaintext order data on‑chain or in a centralized DB.
+- **Encrypted settlement routing:** Recipients live in `plop.settlement` as ciphertext; only the engine can decrypt.
+- **BitGo policy‑gated settlement:** Whitelist + velocity policies enforced before every transfer.
+- **Auto‑approval (optional):** A daemon approves BitGo pending approvals only if recipient + amount match the encrypted order payload.
+- **Real deposits + live activation:** BitGo webhooks (and Hoodi watchers as fallback) flip orders to LIVE on confirmed deposits.
+- **Partial fills + residuals:** Matching supports partial fills by creating a residual order that inherits the original TTL.
+- **Refund safety:** Cancelled/expired orders auto‑refund; late deposits are refunded by the watcher.
+- **Slippage tolerance:** Every order has a slippage window (default 2%) that must hold for a match.
+- **Cross‑session history:** UI keeps local history across past session subnames without exposing anything on‑chain.
+
 ### Architecture diagram
 
 ```mermaid
